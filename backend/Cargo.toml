@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.97"
 
+[features]
+default = ["bundled-duckdb"]
+bundled-duckdb = ["duckdb/bundled", "duckdb/json"]
+
 [lints.rust]
 unsafe_code = "forbid"
 
@@ -39,5 +43,5 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow = "1"
 rand = "0.9"
-duckdb = { version = "1.10505.0", features = ["bundled", "json"] }
+duckdb = "1.10505.0"
 tempfile = "3.27.0"

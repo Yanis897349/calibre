@@ -14,12 +14,37 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  check:
+  frontend:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --prefix frontend
+      - name: Formatting
+        run: frontend/node_modules/.bin/oxfmt --check .
+      - name: Frontend lint
+        run: npm run lint:frontend
+      - name: Type checks
+        run: npm run typecheck
+      - name: Tooling probes
+        run: npm run test:tooling
+      - name: Production build
+        run: npm run build
+
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     env:
-      CARGO_BUILD_JOBS: 2
       CARGO_TERM_COLOR: always
+      # --no-default-features disables bundled DuckDB, including its JSON feature.
+      DUCKDB_DOWNLOAD_LIB: "1"
+      # The DuckDB build script copies the shared library here for direct API runs.
+      LD_LIBRARY_PATH: ${{ github.workspace }}/backend/target/debug/deps
     services:
       postgres:
         image: postgres:17-alpine
@@ -36,34 +61,52 @@ jobs:
           --health-retries 10
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version-file: .node-version
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
       - name: Install Rust toolchain and components
         run: rustup show active-toolchain
-      - uses: actions/cache@v6
+      - name: Rust formatting
+        run: cargo fmt --manifest-path backend/Cargo.toml --all -- --check
+      - name: Restore Rust cache
+        id: rust-cache
+        uses: actions/cache/restore@v6
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             backend/target
-          key: rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'backend/Cargo.lock') }}
-          restore-keys: rust-${{ runner.os }}-${{ runner.arch }}-
-      - run: npm ci --prefix frontend
-      - name: Formatting, lint, types, tooling probes, and Rust tests
-        run: npm run check
+          key: rust-prebuilt-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'backend/Cargo.lock', 'backend/Cargo.toml') }}
+          restore-keys: rust-prebuilt-v1-${{ runner.os }}-${{ runner.arch }}-
+      - name: Rust lint
+        run: cargo clippy --manifest-path backend/Cargo.toml --locked --no-default-features --all-targets -- -D warnings
+      - name: Compile API and tests
+        run: cargo build --manifest-path backend/Cargo.toml --locked --no-default-features --all-targets
+      - name: Save Rust cache before tests
+        if: steps.rust-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            backend/target
+          key: ${{ steps.rust-cache.outputs.cache-primary-key }}
+      - name: Rust tests
+        run: cargo test --manifest-path backend/Cargo.toml --locked --no-default-features --all-targets
       - name: PostgreSQL migration and persistence
-        run: sh scripts/check-persistence.sh
+        run: sh scripts/check-persistence.sh --no-default-features
         env:
           TEST_DATABASE_URL: postgres://calibre:calibre_test@127.0.0.1:5432/calibre_test
-      - run: npm run build
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --prefix frontend
       - name: Install Chromium
         working-directory: frontend
         run: npx --no-install playwright install --with-deps chromium
       - name: Browser tests
         run: npm run test:e2e
+        env:
+          PLAYWRIGHT_API_BINARY: ../backend/target/debug/calibre-api
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
@@ -72,3 +115,16 @@ jobs:
             frontend/test-results
             frontend/playwright-report
           if-no-files-found: ignore
+
+  # Keep the original required check name while the work runs in parallel.
+  check:
+    if: always()
+    needs: [frontend, backend]
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Verify all checks passed
+        env:
+          FRONTEND_RESULT: ${{ needs.frontend.result }}
+          BACKEND_RESULT: ${{ needs.backend.result }}
+        run: test "$FRONTEND_RESULT" = success && test "$BACKEND_RESULT" = success

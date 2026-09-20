@@ -211,6 +211,26 @@ pub fn merge_settings(data: &mut Dataset, incoming: Vec<Setting>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn duckdb_json_available_without_external_access() {
+        let config = duckdb::Config::default()
+            .enable_external_access(false)
+            .unwrap();
+        let conn = duckdb::Connection::open_in_memory_with_flags(config).unwrap();
+        let json: String = conn
+            .query_row(
+                "SELECT to_json(player) FROM (SELECT 'Test' AS name, 800 AS dpi) player",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&json).unwrap(),
+            serde_json::json!({"name": "Test", "dpi": 800})
+        );
+    }
+
     #[test]
     fn blocked_page_never_overwrites() {
         assert!(parse_prosettings("<title>Just a moment...</title>").is_err())

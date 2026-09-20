@@ -3,6 +3,8 @@
 A self-hosted VALORANT sensitivity explorer built with Rust, React, and TypeScript.
 Compare player settings, filter competitive data, and explore sensitivity recommendations.
 
+![Calibre mechanical styles dashboard showing sensitivity distributions and player cohorts](docs/images/mechanical-styles.png)
+
 ## Development
 
 Requires Node 24.18+, Rust 1.97.1 via rustup, and a C++ compiler for DuckDB.

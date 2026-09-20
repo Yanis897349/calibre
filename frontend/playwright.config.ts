@@ -15,7 +15,9 @@ export default defineConfig({
   use: { baseURL, trace: "retain-on-failure" },
   webServer: [
     {
-      command: "cargo run --manifest-path ../backend/Cargo.toml",
+      command:
+        process.env.PLAYWRIGHT_API_BINARY ||
+        "cargo run --manifest-path ../backend/Cargo.toml --locked",
       env: { BIND_ADDRESS: `127.0.0.1:${apiPort}` },
       url: `${apiURL}/api/health`,
       reuseExistingServer: !process.env.CI,
