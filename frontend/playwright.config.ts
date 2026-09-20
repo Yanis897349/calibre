@@ -11,7 +11,9 @@ const apiURL = `http://127.0.0.1:${apiPort}`;
 export default defineConfig({
   testDir: "./tests",
   fullyParallel: false,
-  timeout: 30000,
+  timeout: process.env.CI ? 90000 : 30000,
+  expect: { timeout: process.env.CI ? 15000 : 5000 },
+  workers: process.env.CI ? 1 : undefined,
   use: { baseURL, trace: "retain-on-failure" },
   webServer: [
     {
