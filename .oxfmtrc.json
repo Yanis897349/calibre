@@ -1,0 +1,17 @@
+{
+  "$schema": "./frontend/node_modules/oxfmt/configuration_schema.json",
+  "ignorePatterns": [
+    ".context/**",
+    "**/node_modules/**",
+    "backend/target/**",
+    "frontend/tools/oxlint/anti-slop/**",
+    "frontend/dist/**",
+    "frontend/playwright-report/**",
+    "frontend/test-results/**",
+    "frontend/package-lock.json",
+    "frontend/src/registry-css.json",
+    "data/**"
+  ],
+  "printWidth": 80,
+  "tabWidth": 2
+}

@@ -1,0 +1,5 @@
+# Clippy measures cognitive complexity, rather than JavaScript's cyclomatic complexity.
+cognitive-complexity-threshold = 20
+# Assertions in tests should fail immediately with their test context.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true

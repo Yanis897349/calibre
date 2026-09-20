@@ -1,0 +1,118 @@
+{
+  "astra": {
+    "name": "Astra",
+    "icon": "/agents/astra.png"
+  },
+  "breach": {
+    "name": "Breach",
+    "icon": "/agents/breach.png"
+  },
+  "brimstone": {
+    "name": "Brimstone",
+    "icon": "/agents/brimstone.png"
+  },
+  "chamber": {
+    "name": "Chamber",
+    "icon": "/agents/chamber.png"
+  },
+  "clove": {
+    "name": "Clove",
+    "icon": "/agents/clove.png"
+  },
+  "cypher": {
+    "name": "Cypher",
+    "icon": "/agents/cypher.png"
+  },
+  "deadlock": {
+    "name": "Deadlock",
+    "icon": "/agents/deadlock.png"
+  },
+  "fade": {
+    "name": "Fade",
+    "icon": "/agents/fade.png"
+  },
+  "gekko": {
+    "name": "Gekko",
+    "icon": "/agents/gekko.png"
+  },
+  "harbor": {
+    "name": "Harbor",
+    "icon": "/agents/harbor.png"
+  },
+  "iso": {
+    "name": "Iso",
+    "icon": "/agents/iso.png"
+  },
+  "jett": {
+    "name": "Jett",
+    "icon": "/agents/jett.png"
+  },
+  "kayo": {
+    "name": "KAY/O",
+    "icon": "/agents/kayo.png"
+  },
+  "killjoy": {
+    "name": "Killjoy",
+    "icon": "/agents/killjoy.png"
+  },
+  "miks": {
+    "name": "Miks",
+    "icon": "/agents/miks.png"
+  },
+  "neon": {
+    "name": "Neon",
+    "icon": "/agents/neon.png"
+  },
+  "omen": {
+    "name": "Omen",
+    "icon": "/agents/omen.png"
+  },
+  "phoenix": {
+    "name": "Phoenix",
+    "icon": "/agents/phoenix.png"
+  },
+  "raze": {
+    "name": "Raze",
+    "icon": "/agents/raze.png"
+  },
+  "reyna": {
+    "name": "Reyna",
+    "icon": "/agents/reyna.png"
+  },
+  "sage": {
+    "name": "Sage",
+    "icon": "/agents/sage.png"
+  },
+  "skye": {
+    "name": "Skye",
+    "icon": "/agents/skye.png"
+  },
+  "sova": {
+    "name": "Sova",
+    "icon": "/agents/sova.png"
+  },
+  "tejo": {
+    "name": "Tejo",
+    "icon": "/agents/tejo.png"
+  },
+  "veto": {
+    "name": "Veto",
+    "icon": "/agents/veto.png"
+  },
+  "viper": {
+    "name": "Viper",
+    "icon": "/agents/viper.png"
+  },
+  "vyse": {
+    "name": "Vyse",
+    "icon": "/agents/vyse.png"
+  },
+  "waylay": {
+    "name": "Waylay",
+    "icon": "/agents/waylay.png"
+  },
+  "yoru": {
+    "name": "Yoru",
+    "icon": "/agents/yoru.png"
+  }
+}
