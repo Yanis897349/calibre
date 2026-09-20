@@ -1,0 +1,14 @@
+{
+  "Controller": {
+    "icon": "/roles/controller.png"
+  },
+  "Duelist": {
+    "icon": "/roles/duelist.png"
+  },
+  "Initiator": {
+    "icon": "/roles/initiator.png"
+  },
+  "Sentinel": {
+    "icon": "/roles/sentinel.png"
+  }
+}

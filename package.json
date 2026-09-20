@@ -1,0 +1,23 @@
+{
+  "name": "calibre",
+  "private": true,
+  "scripts": {
+    "dev": "npm --prefix frontend run dev",
+    "build": "npm --prefix frontend run build",
+    "test": "cargo test --manifest-path backend/Cargo.toml --locked --all-targets --all-features",
+    "start": "npm --prefix frontend run dev",
+    "lint": "npm run lint:frontend && npm run lint:backend",
+    "lint:frontend": "npm --prefix frontend run lint",
+    "lint:backend": "cargo clippy --manifest-path backend/Cargo.toml --locked --all-targets --all-features -- -D warnings",
+    "format": "frontend/node_modules/.bin/oxfmt --write . && cargo fmt --manifest-path backend/Cargo.toml --all",
+    "format:check": "frontend/node_modules/.bin/oxfmt --check . && cargo fmt --manifest-path backend/Cargo.toml --all -- --check",
+    "typecheck": "npm --prefix frontend run typecheck",
+    "test:tooling": "npm --prefix frontend run test:tooling",
+    "test:e2e": "npm --prefix frontend run test:e2e",
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm run test:tooling && npm test",
+    "fix": "npm run format && npm --prefix frontend run lint:fix && npm run format"
+  },
+  "engines": {
+    "node": ">=24.18.0 <25"
+  }
+}

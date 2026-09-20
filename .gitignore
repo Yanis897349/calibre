@@ -1,0 +1,9 @@
+.context/
+node_modules/
+target/
+dist/
+.env
+playwright-report/
+test-results/
+.DS_Store
+*.tsbuildinfo

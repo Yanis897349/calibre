@@ -1,0 +1,41 @@
+name: calibre
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: calibre
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-calibre_local}
+      POSTGRES_DB: calibre
+    ports:
+      - "127.0.0.1:54329:5432"
+    volumes:
+      - calibre-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U calibre"]
+      interval: 3s
+      timeout: 3s
+      retries: 15
+  api:
+    profiles: ["full"]
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      DATABASE_URL: postgres://calibre:${POSTGRES_PASSWORD:-calibre_local}@db:5432/calibre
+      BIND_ADDRESS: 0.0.0.0:3001
+      IMPORT_TOKEN: ${IMPORT_TOKEN:-}
+      RUST_LOG: calibre_api=info,tower_http=info
+    depends_on:
+      db:
+        condition: service_healthy
+  web:
+    profiles: ["full"]
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    ports:
+      - "127.0.0.1:8080:80"
+    depends_on:
+      - api
+volumes:
+  calibre-data:
