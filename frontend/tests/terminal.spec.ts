@@ -51,7 +51,7 @@ test("backend normalization, hierarchy, filters and empty cohorts", async ({
   expect(base.players.every((p) => p.contribution <= 0.10000001)).toBeTruthy();
 
   const anchor = await analyze(800, {
-    role: "Sentinel",
+    roles: ["Sentinel"],
     anchor_min: 0.6,
     movement_max: 0.3,
   });
@@ -303,11 +303,14 @@ test("player history deduplicates repeat readings but retains changes, reversion
   await ready(page);
   await page.locator(".player-name").first().click();
   const dialog = page.getByRole("dialog");
+  await dialog.getByRole("tab", { name: "Setup" }).click();
   const observations = dialog.locator(".observations > div");
   await expect(observations).toHaveCount(4);
   await expect(observations.nth(1)).toContainText("1,600 DPI × 0.135");
   await expect(observations.nth(2)).toContainText("800 DPI × 0.270");
+  await dialog.getByRole("tab", { name: "Career" }).click();
   await expect(dialog.locator(".event-row")).toContainText("2026");
+  await expect(dialog.locator(".placement.gold")).toBeVisible();
   await expect(dialog.getByRole("link")).toHaveCount(0);
   await expect(page.locator('a[href^="http"]')).toHaveCount(0);
 });
@@ -373,4 +376,191 @@ test("equipment ratio sliders preserve units, precision, stable bounds and reset
       await upper.getAttribute("aria-valuemax"),
     );
   }
+});
+
+test("multi-value filters, combat statistics and stat thresholds", async ({
+  request,
+}) => {
+  // Older clients send single-value keys such as `agent`.
+  const analyze = async (
+    filters: Filters | { agent: string },
+  ): Promise<Analysis> => {
+    const r = await request.post("/api/analyze", {
+      data: { dpi: 800, filters },
+    });
+
+    expect(r.ok()).toBeTruthy();
+
+    return r.json();
+  };
+
+  const pair = await analyze({ agents: ["jett", "raze"], roles: ["Duelist"] });
+  expect(pair.players.length).toBeGreaterThan(10);
+  expect(
+    pair.players.every(
+      (p) =>
+        p.role === "Duelist" &&
+        p.agents.every((a) => a.name === "jett" || a.name === "raze"),
+    ),
+  ).toBeTruthy();
+
+  const legacy = await analyze({ agent: "jett" });
+  expect(
+    legacy.players.every((p) => p.agents.every((a) => a.name === "jett")),
+  ).toBeTruthy();
+
+  const strict = await analyze({ kd_min: 1.1, hs_min: 0.25, maps: ["Ascent"] });
+  expect(strict.players.length).toBeGreaterThan(0);
+  expect(
+    strict.players.every(
+      (p) =>
+        p.stats.kd! >= 1.1 &&
+        p.stats.hs! >= 0.25 &&
+        p.map_pool.every((m) => m.name === "Ascent"),
+    ),
+  ).toBeTruthy();
+
+  const base = await analyze({});
+  expect(base.role_profiles.map((r) => r.name)).toEqual([
+    "Duelist",
+    "Initiator",
+    "Controller",
+    "Sentinel",
+    "Flex",
+  ]);
+  expect(base.cohort?.stats.kd).toBeGreaterThan(0.8);
+  expect(base.players[0].percentiles.kd).toBeGreaterThanOrEqual(0);
+
+  const invalid = await request.post("/api/analyze", {
+    data: { dpi: 800, filters: { kd_min: 2, kd_max: 1 } },
+  });
+
+  expect(invalid.status()).toBe(400);
+});
+
+test("multi-select cohort chips, combat panels and table views", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await ready(page);
+  await page.getByRole("combobox", { name: "All roles", exact: true }).click();
+  await page.getByRole("option", { name: "Duelist", exact: true }).click();
+  await page.getByRole("option", { name: "Sentinel", exact: true }).click();
+  await page.keyboard.press("Escape");
+  await ready(page);
+  const chips = page.locator(".active-filters");
+  await expect(chips).toContainText("Role: Duelist");
+  await expect(chips).toContainText("Role: Sentinel");
+  await expect(page.getByText("How this cohort plays")).toBeVisible();
+  await page.getByRole("button", { name: "Remove Role: Duelist" }).click();
+  await ready(page);
+  await expect(chips).not.toContainText("Duelist");
+  await expect(
+    page.locator(".player-table-panel").getByRole("cell", { name: "Duelist" }),
+  ).toHaveCount(0);
+
+  await page.locator(".player-name").first().click();
+  await page.getByRole("tab", { name: "Combat" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Combat statistics" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("dialog").locator(".weapon-card.operator .weapon-icon"),
+  ).toBeVisible();
+  await page.getByRole("tab", { name: "Agents & maps" }).click();
+  await expect(page.getByRole("heading", { name: "Map pool" })).toBeVisible();
+  await expect(page.locator(".map-card img").first()).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  await page.getByRole("button", { name: "Player database" }).click();
+  await ready(page);
+  await page.getByRole("button", { name: "Combat", exact: true }).click();
+  await expect(page.getByRole("button", { name: "K/D" })).toBeVisible();
+  await page
+    .getByRole("button", { name: "Role comparison", exact: true })
+    .click();
+  await ready(page);
+  await expect(page.getByText("Role combat profiles")).toBeVisible();
+});
+
+test("player modal browsing, shared links and filter sections", async ({
+  page,
+}) => {
+  await page.goto("/?roles=Duelist&dpi=1600#players");
+  await ready(page);
+  await expect(page.locator(".active-filters")).toContainText("Role: Duelist");
+  await expect(
+    page.getByRole("button", { name: "1600", exact: true }),
+  ).toHaveClass(/selected/);
+
+  // The whole row opens the player, not only the name button.
+  await page
+    .locator(".player-table-panel tbody tr")
+    .first()
+    .locator("td")
+    .nth(4)
+    .click();
+  const dialog = page.getByRole("dialog");
+  const title = dialog.getByRole("heading", { level: 2 });
+  const first = await title.innerText();
+  await expect(page).toHaveURL(/player=/);
+  await expect(dialog.getByText("Sensitivity @ 1,600 DPI")).toBeVisible();
+
+  await dialog.getByRole("button", { name: "Next player" }).click();
+  await expect(title).not.toHaveText(first);
+  const second = await title.innerText();
+  await page.keyboard.press("ArrowLeft");
+  await expect(title).toHaveText(first);
+  await page.keyboard.press("ArrowRight");
+  await expect(title).toHaveText(second);
+
+  const shared = page.url();
+  await page.goto(shared);
+  await expect(
+    page.getByRole("dialog").getByRole("heading", { level: 2 }),
+  ).toHaveText(second);
+
+  await dialog.getByRole("tab", { name: "Setup" }).click();
+  await expect(dialog.locator(".converter .current")).toContainText(
+    "1,600 DPI",
+  );
+  await dialog.getByRole("tab", { name: "Career" }).click();
+  await expect(
+    dialog.getByRole("heading", { name: "Role history" }),
+  ).toBeVisible();
+
+  await dialog.getByRole("tab", { name: "Compare" }).click();
+  await dialog.locator(".compare-suggestion").first().click();
+  await expect(dialog.locator(".compare-row")).toHaveCount(13);
+  await expect(dialog.locator(".compare-side.second")).toBeVisible();
+  await dialog.getByRole("button", { name: /Stop comparing/ }).click();
+  await expect(
+    dialog.getByRole("textbox", { name: "Search players to compare" }),
+  ).toBeVisible();
+
+  const agent = dialog.locator(".agent-chip").first();
+  const agentName = (await agent.innerText()).split("\n")[0].trim();
+  await agent.click();
+  await expect(dialog).not.toBeVisible();
+  await ready(page);
+  await expect(page.locator(".active-filters")).toContainText(
+    `Agent: ${agentName}`,
+  );
+  await expect(page).not.toHaveURL(/player=/);
+  await expect(page).toHaveURL(/agents=/);
+
+  await page.getByRole("button", { name: "More filters" }).click();
+  const filters = page.getByRole("dialog");
+  const nav = filters.getByRole("navigation", { name: "Filter sections" });
+  await expect(nav.getByRole("button", { name: /Competition/ })).toContainText(
+    "1",
+  );
+  await nav.getByRole("button", { name: /Weapons/ }).click();
+  await expect(
+    filters.getByRole("heading", { name: "Weapons" }),
+  ).toBeInViewport();
+  await filters.getByRole("button", { name: "Clear 1" }).click();
+  await expect(
+    nav.getByRole("button", { name: /Competition/ }),
+  ).not.toContainText("1");
 });

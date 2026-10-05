@@ -1,6 +1,7 @@
 import { useId, useState } from "react";
 import { useReducedMotion } from "framer-motion";
 import { PlayerPointPreview } from "./components/player-point-preview";
+import { type ScatterAxis, axisDomain } from "./metrics";
 import { AreaChart, LineChart } from "./components/dither-kit/area-chart";
 import { Area, Line } from "./components/dither-kit/area";
 import { BarChart } from "./components/dither-kit/bar-chart";
@@ -268,6 +269,50 @@ export function CompareChart({
   );
 }
 
+export function ComparisonRadar({
+  first,
+  second,
+  labels,
+}: {
+  first: Mechanical;
+  second: Mechanical;
+  labels: [string, string];
+}) {
+  const reduced = useReducedMotion();
+
+  return (
+    <div
+      role="img"
+      aria-label={mechanics
+        .map(
+          ([k, l]) =>
+            `${l}: ${labels[0]} ${Math.round(first[k] * 100)}%, ${labels[1]} ${Math.round(second[k] * 100)}%`,
+        )
+        .join("; ")}
+    >
+      <RadarChart
+        data={mechanics.map(([key, label]) => ({
+          label: label.split(" ")[0],
+          first: first[key] * 100,
+          second: second[key] * 100,
+          bound: 100,
+        }))}
+        nameKey="label"
+        config={{
+          first: { label: labels[0], color: "green" },
+          second: { label: labels[1], color: "purple" },
+          bound: { label: "Scale", color: "grey" },
+        }}
+        className="radar-chart"
+        animate={!reduced}
+      >
+        <Radar dataKey="first" variant="dotted" />
+        <Radar dataKey="second" variant="dotted" />
+      </RadarChart>
+    </div>
+  );
+}
+
 export function MechanicalRadar({ profile }: { profile: Mechanical }) {
   const reduced = useReducedMotion();
 
@@ -305,12 +350,15 @@ export function Scatter({
   onPlayer,
 }: {
   players: Player[];
-  axis: "performance" | keyof Mechanical;
+  axis: ScatterAxis;
   dpi: number;
   onPlayer: (p: Player) => void;
 }) {
   const max = Math.max(600, ...players.map((p) => p.edpi));
   const previewId = useId();
+  const [low, high] = axisDomain(axis, players);
+  const y = (v: number) => 205 - ((v - low) / (high - low || 1)) * 175;
+  const plotted = players.filter((p) => axis.value(p) != null);
 
   const [preview, setPreview] = useState<{
     id: string;
@@ -329,7 +377,7 @@ export function Scatter({
       <svg
         viewBox="0 0 740 240"
         role="group"
-        aria-label={`Sensitivity at ${dpi} DPI versus ${axis} scatter plot`}
+        aria-label={`Sensitivity at ${dpi} DPI versus ${axis.label} scatter plot`}
       >
         {[0, 0.25, 0.5, 0.75, 1].map((t) => (
           <g key={t}>
@@ -348,7 +396,7 @@ export function Scatter({
               fill="#8b8d93"
               fontSize="10"
             >
-              {Math.round(t * 100)}%
+              {axis.format(low + t * (high - low))}
             </text>
           </g>
         ))}
@@ -364,15 +412,11 @@ export function Scatter({
             {num(((i / 5) * max) / dpi, 2)}
           </text>
         ))}
-        {players.map((p) => (
+        {plotted.map((p) => (
           <circle
             key={p.id}
             cx={48 + (p.edpi / max) * 670}
-            cy={
-              205 -
-              (axis === "performance" ? p.performance : p.mechanical[axis]) *
-                175
-            }
+            cy={y(axis.value(p) ?? low)}
             r={3 + Math.sqrt(p.contribution) * 15}
             fill={colors.get(p.role)}
             opacity=".75"

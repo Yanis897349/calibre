@@ -25,6 +25,40 @@ export type EventResult = {
   date: string;
 };
 
+export type Usage = { name: string; maps: number; share: number };
+
+export type MapUsage = Usage & { kd: number | null; rating: number | null };
+
+export type CombatStats = {
+  rounds: number;
+  kills: number;
+  deaths: number;
+  assists: number;
+  kd: number | null;
+  kda: number | null;
+  kpr: number | null;
+  dpr: number | null;
+  apr: number | null;
+  adr: number | null;
+  kast: number | null;
+  hs: number | null;
+  fk_per_round: number | null;
+  fd_per_round: number | null;
+  opening_success: number | null;
+  multi_kill_rate: number | null;
+  clutches_per_100: number | null;
+  plants_per_100: number | null;
+  defuses_per_100: number | null;
+  /** Operator kills and all kills inside kill-matrix coverage. */
+  op_kills: number;
+  km_kills: number;
+  op_kill_share: number | null;
+  op_death_share: number | null;
+  op_kills_per_round: number | null;
+  rating: number | null;
+  acs: number | null;
+};
+
 export type Player = {
   id: string;
   name: string;
@@ -32,12 +66,15 @@ export type Player = {
   role: string;
   region: string;
   country: string;
-  agents: { name: string; maps: number; share: number }[];
+  agents: Usage[];
+  map_pool: MapUsage[];
   role_history: Record<string, string>;
   setting: Setting;
   edpi: number;
   normalized_800: number;
   performance: number;
+  percentiles: Partial<Record<PercentileKey, number>>;
+  stats: CombatStats;
   rating: number | null;
   acs: number | null;
   achievement: number | null;
@@ -54,14 +91,30 @@ export type Player = {
   warnings: string[];
 };
 
+export const performanceBases = [
+  ["composite", "Composite"],
+  ["rating", "Rating"],
+  ["kd", "K/D"],
+  ["kda", "KDA"],
+  ["adr", "ADR"],
+  ["kast", "KAST"],
+  ["hs", "Headshot %"],
+  ["acs", "ACS"],
+] as const;
+
+export type PerformanceBasis = (typeof performanceBases)[number][0];
+
+export type PercentileKey = Exclude<PerformanceBasis, "composite">;
+
 export type Filters = {
-  role?: string;
-  agent?: string;
-  team?: string;
-  region?: string;
-  tournament?: string;
-  year?: number;
-  tier?: string;
+  roles?: string[];
+  agents?: string[];
+  teams?: string[];
+  regions?: string[];
+  tournaments?: string[];
+  years?: number[];
+  tiers?: string[];
+  maps?: string[];
   search?: string;
   style?: string;
   edpi_min?: number;
@@ -71,7 +124,24 @@ export type Filters = {
   dpi_min?: number;
   dpi_max?: number;
   performance_min?: number;
+  performance_basis?: PerformanceBasis;
   maps_min?: number;
+  agent_share_min?: number;
+  active_days?: number;
+  kd_min?: number;
+  kd_max?: number;
+  kda_min?: number;
+  kda_max?: number;
+  adr_min?: number;
+  adr_max?: number;
+  kast_min?: number;
+  kast_max?: number;
+  hs_min?: number;
+  hs_max?: number;
+  rating_min?: number;
+  rating_max?: number;
+  op_share_min?: number;
+  op_share_max?: number;
   operator_min?: number;
   operator_max?: number;
   movement_min?: number;
@@ -85,11 +155,29 @@ export type Filters = {
   profile?: Mechanical;
 };
 
+export type ListFilter =
+  | "roles"
+  | "agents"
+  | "teams"
+  | "regions"
+  | "tournaments"
+  | "tiers"
+  | "maps";
+
 export type Comparison = {
   name: string;
   count: number;
   peak: number | null;
   density: number[];
+};
+
+export type CohortProfile = {
+  name: string;
+  count: number;
+  maps: number;
+  stats: CombatStats;
+  agents: Usage[];
+  map_pool: Usage[];
 };
 
 export type Analysis = {
@@ -114,6 +202,8 @@ export type Analysis = {
   players: Player[];
   roles: Comparison[];
   styles: Comparison[];
+  cohort: CohortProfile | null;
+  role_profiles: CohortProfile[];
   warnings: string[];
   dpi: number;
   total_players: number;
@@ -128,6 +218,7 @@ export type Meta = {
   years: string[];
   tournaments: string[];
   tiers: string[];
+  maps?: string[];
   storage: string;
 };
 
@@ -168,6 +259,9 @@ export const num = (v: number | undefined | null, d = 0) =>
         minimumFractionDigits: d,
         maximumFractionDigits: d,
       });
+
+export const pct = (v: number | undefined | null, d = 0) =>
+  v == null ? "—" : num(v * 100, d) + "%";
 
 export const date = (s: string | null) =>
   s

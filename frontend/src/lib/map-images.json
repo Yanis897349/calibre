@@ -1,0 +1,67 @@
+{
+  "abyss": {
+    "name": "Abyss",
+    "sites": "A/B Sites",
+    "image": "/maps/abyss.jpg"
+  },
+  "ascent": {
+    "name": "Ascent",
+    "sites": "A/B Sites",
+    "image": "/maps/ascent.jpg"
+  },
+  "bind": {
+    "name": "Bind",
+    "sites": "A/B Sites",
+    "image": "/maps/bind.jpg"
+  },
+  "breeze": {
+    "name": "Breeze",
+    "sites": "A/B Sites",
+    "image": "/maps/breeze.jpg"
+  },
+  "corrode": {
+    "name": "Corrode",
+    "sites": "A/B Sites",
+    "image": "/maps/corrode.jpg"
+  },
+  "fracture": {
+    "name": "Fracture",
+    "sites": "A/B Sites",
+    "image": "/maps/fracture.jpg"
+  },
+  "haven": {
+    "name": "Haven",
+    "sites": "A/B/C Sites",
+    "image": "/maps/haven.jpg"
+  },
+  "icebox": {
+    "name": "Icebox",
+    "sites": "A/B Sites",
+    "image": "/maps/icebox.jpg"
+  },
+  "lotus": {
+    "name": "Lotus",
+    "sites": "A/B/C Sites",
+    "image": "/maps/lotus.jpg"
+  },
+  "pearl": {
+    "name": "Pearl",
+    "sites": "A/B Sites",
+    "image": "/maps/pearl.jpg"
+  },
+  "split": {
+    "name": "Split",
+    "sites": "A/B Sites",
+    "image": "/maps/split.jpg"
+  },
+  "summit": {
+    "name": "Summit",
+    "sites": "A/B Sites",
+    "image": "/maps/summit.jpg"
+  },
+  "sunset": {
+    "name": "Sunset",
+    "sites": "A/B Sites",
+    "image": "/maps/sunset.jpg"
+  }
+}

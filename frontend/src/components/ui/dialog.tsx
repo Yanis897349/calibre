@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useState,
+  type ComponentProps,
   type ComponentPropsWithoutRef,
   type HTMLAttributes,
   type ReactElement,
@@ -231,7 +232,7 @@ function DialogHeader({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
   );
 }
 
-function DialogBody({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
+function DialogBody({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
       data-slot="dialog-body"

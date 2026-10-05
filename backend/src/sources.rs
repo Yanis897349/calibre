@@ -181,6 +181,65 @@ pub fn read_vct_database(path: &std::path::Path) -> Result<(Vec<Split>, Vec<Even
     Ok((splits, events))
 }
 
+fn compact_number(value: Value) -> Value {
+    match value.as_f64() {
+        Some(n) if value.is_f64() && n.fract() == 0.0 && n.abs() < 1e15 => Value::from(n as i64),
+        _ => value,
+    }
+}
+
+/// Builds the bundled seed: competitive rows for players with known settings, as columns and rows.
+pub fn bundle(
+    settings: &[Setting],
+    mut splits: Vec<Split>,
+    mut events: Vec<EventResult>,
+) -> Result<(Value, Vec<EventResult>)> {
+    use std::collections::HashSet;
+    let known: HashSet<String> = settings.iter().map(|s| s.name.to_lowercase()).collect();
+    splits.retain(|s| known.contains(&s.player.to_lowercase()));
+    events.retain(|e| known.contains(&e.player.to_lowercase()));
+    let key = |s: &Split| {
+        (
+            s.player.to_lowercase(),
+            s.season,
+            s.tournament.clone(),
+            s.agent.clone(),
+            s.map.clone(),
+            s.region.clone(),
+        )
+    };
+    splits.sort_by_key(key);
+    events.sort_by(|a, b| {
+        (
+            a.date.as_str(),
+            a.player.to_lowercase(),
+            a.tournament.as_str(),
+        )
+            .cmp(&(
+                b.date.as_str(),
+                b.player.to_lowercase(),
+                b.tournament.as_str(),
+            ))
+    });
+    let mut cols: Vec<String> = vec![];
+    let mut rows = Vec::with_capacity(splits.len());
+    for split in &splits {
+        let Value::Object(object) = serde_json::to_value(split)? else {
+            bail!("Competitive record did not serialize as an object")
+        };
+        if cols.is_empty() {
+            cols = object.keys().cloned().collect();
+        }
+        rows.push(Value::Array(
+            cols.iter()
+                .map(|c| compact_number(object.get(c).cloned().unwrap_or(Value::Null)))
+                .collect(),
+        ));
+    }
+    anyhow::ensure!(!rows.is_empty(), "No competitive records for known players");
+    Ok((serde_json::json!({"cols": cols, "rows": rows}), events))
+}
+
 /// Re-importing the same observation is idempotent; new dates remain history.
 pub fn merge_settings(data: &mut Dataset, incoming: Vec<Setting>) {
     use std::collections::HashSet;
@@ -229,6 +288,30 @@ mod tests {
             serde_json::from_str::<serde_json::Value>(&json).unwrap(),
             serde_json::json!({"name": "Test", "dpi": 800})
         );
+    }
+
+    #[test]
+    fn bundle_round_trips_through_decoder() {
+        let d = seed().unwrap();
+        let (value, events) = bundle(&d.settings, d.splits.clone(), d.events.clone()).unwrap();
+        let decoded = decode_vct(value).unwrap();
+        assert_eq!(decoded.len(), d.splits.len());
+        assert_eq!(events.len(), d.events.len());
+        let total = |rows: &[Split]| rows.iter().map(|r| r.kills + r.deaths).sum::<f64>();
+        assert_eq!(total(&decoded), total(&d.splits));
+    }
+
+    #[test]
+    fn bundled_data_has_combat_coverage() {
+        let d = seed().unwrap();
+        let rounds: f64 = d.splits.iter().map(|r| r.rounds).sum();
+        let covered: f64 = d.splits.iter().map(|r| r.stat_rounds).sum();
+        assert!(covered / rounds > 0.95);
+        assert!(d.splits.iter().all(|r| !r.map.is_empty()));
+        // Both kill-matrix orientations contribute Operator kills.
+        let op: f64 = d.splits.iter().map(|r| r.op_kills).sum();
+        let km: f64 = d.splits.iter().map(|r| r.km_kills).sum();
+        assert!(op / km > 0.025);
     }
 
     #[test]

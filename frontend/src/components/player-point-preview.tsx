@@ -2,7 +2,8 @@ import { useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AgentIcon, agentDisplayName } from "./agent-icon";
 import { PlayerPortrait, RoleIcon, TeamLabel } from "./identity-media";
-import { type Player, type Mechanical, colors, mechanics, num } from "../types";
+import { type Player, colors, num } from "../types";
+import type { ScatterAxis } from "../metrics";
 
 export function PlayerPointPreview({
   id,
@@ -14,7 +15,7 @@ export function PlayerPointPreview({
   id: string;
   player: Player;
   anchor: SVGCircleElement;
-  axis: "performance" | keyof Mechanical;
+  axis: ScatterAxis;
   dpi: number;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -24,13 +25,7 @@ export function PlayerPointPreview({
     top: number;
   } | null>(null);
 
-  const axisLabel =
-    axis === "performance"
-      ? "Performance"
-      : mechanics.find(([key]) => key === axis)?.[1];
-
-  const axisValue =
-    axis === "performance" ? player.performance : player.mechanical[axis];
+  const axisValue = axis.value(player);
 
   useLayoutEffect(() => {
     const preview = ref.current;
@@ -140,15 +135,13 @@ export function PlayerPointPreview({
           <dd>{num(player.edpi / dpi, 3)}</dd>
         </div>
         <div>
-          <dt>{axisLabel}</dt>
-          <dd>
-            {num(axisValue * 100, 1)}
-            <span>%</span>
-          </dd>
+          <dt>{axis.label}</dt>
+          <dd>{axisValue == null ? "—" : axis.format(axisValue)}</dd>
         </div>
       </dl>
       <div className="point-preview-context">
         <span>{num(player.maps)} maps</span>
+        <span>{num(player.stats.kd, 2)} K/D</span>
         <span>{num(player.contribution * 100, 1)}% influence</span>
       </div>
       <div className="point-preview-hint">

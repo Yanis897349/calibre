@@ -60,4 +60,18 @@ With `DATABASE_URL` set:
 cargo run --manifest-path backend/Cargo.toml -- import
 ```
 
-Restart the API after importing.
+Restart the API after importing. Databases imported before combat statistics were added need one fresh import to enable K/D, weapon, and map filters.
+
+To rebuild the bundled seed from a downloaded [VCT database](https://vct-reference.com/dataset/vct.duckdb), keeping only players with known settings:
+
+```sh
+cargo run --manifest-path backend/Cargo.toml -- export-bundle path/to/vct.duckdb data
+```
+
+Weapon silhouettes and map artwork are vendored from [valorant-api.com](https://valorant-api.com). To refresh them after a game update (macOS, uses `sips`):
+
+```sh
+python3 scripts/vendor-assets.py
+```
+
+Filters, display DPI, and the open player are kept in the page address, so a copied link reopens the same view.
