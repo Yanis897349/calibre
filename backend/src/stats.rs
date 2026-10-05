@@ -1,8 +1,9 @@
-use crate::{model::*, players};
+use crate::{metrics, model::*, players};
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use serde::Serialize;
 
 const GRID_SIZE: usize = 241;
+pub const MODEL_VERSION: &str = "1.1.0";
 #[derive(Clone, Serialize)]
 pub struct Point {
     pub edpi: f64,
@@ -40,6 +41,16 @@ pub struct Comparison {
     pub peak: Option<f64>,
     pub density: Vec<f64>,
 }
+/// Pooled combat profile for a group: every covered round counts once.
+#[derive(Clone, Serialize)]
+pub struct CohortProfile {
+    pub name: String,
+    pub count: usize,
+    pub maps: f64,
+    pub stats: CombatStats,
+    pub agents: Vec<Usage>,
+    pub map_pool: Vec<Usage>,
+}
 #[derive(Serialize)]
 pub struct Analysis {
     pub summary: Option<Summary>,
@@ -48,6 +59,8 @@ pub struct Analysis {
     pub players: Vec<Player>,
     pub roles: Vec<Comparison>,
     pub styles: Vec<Comparison>,
+    pub cohort: Option<CohortProfile>,
+    pub role_profiles: Vec<CohortProfile>,
     pub warnings: Vec<String>,
     pub dpi: f64,
     pub total_players: usize,
@@ -171,32 +184,41 @@ fn comparison(name: &str, mut p: Vec<Player>, grid: &[f64]) -> Comparison {
         density: d,
     }
 }
-pub fn analyze(data: &Dataset, request: &AnalysisRequest) -> Analysis {
+pub fn profile(name: &str, players: &[&Player]) -> CohortProfile {
+    let mut totals = Split::default();
+    for p in players {
+        metrics::absorb(&mut totals, &p.totals);
+    }
+    CohortProfile {
+        name: name.into(),
+        count: players.len(),
+        maps: totals.maps,
+        stats: metrics::combat(&totals),
+        agents: metrics::usage(
+            players
+                .iter()
+                .flat_map(|p| p.agents.iter().map(|a| (a.name.clone(), a.maps))),
+        ),
+        map_pool: metrics::usage(
+            players
+                .iter()
+                .flat_map(|p| p.map_pool.iter().map(|m| (m.name.clone(), m.maps))),
+        ),
+    }
+}
+pub fn analyze(ctx: &players::Context, request: &AnalysisRequest) -> Analysis {
     let f = &request.filters;
-    let all = players::build(data, &Filters::default());
-    let mut selected = players::build(data, f);
+    let all = ctx.build(&Filters::default());
+    let mut selected = ctx.build(f);
     cap(&mut selected);
     selected.sort_by(|a, b| b.contribution.total_cmp(&a.contribution));
-    // Keep time, region, team, performance, and sensitivity constraints in the parent.
+    // Keep time, region, team, map, performance, and sensitivity constraints in the parent.
     // Relax mechanical/agent/role labels only; a role subgroup borrows from that role, a role itself from all roles.
-    let mut parent_filters = f.clone();
-    parent_filters.agent = None;
-    parent_filters.style = None;
-    parent_filters.profile = None;
-    parent_filters.operator_min = None;
-    parent_filters.operator_max = None;
-    parent_filters.movement_min = None;
-    parent_filters.movement_max = None;
-    parent_filters.entry_min = None;
-    parent_filters.entry_max = None;
-    parent_filters.anchor_min = None;
-    parent_filters.anchor_max = None;
-    parent_filters.utility_min = None;
-    parent_filters.utility_max = None;
-    let mut parent = players::build(data, &parent_filters);
+    let mut parent_filters = f.without_playstyle();
+    let mut parent = ctx.build(&parent_filters);
     if parent.len() == selected.len() {
-        parent_filters.role = None;
-        parent = players::build(data, &parent_filters);
+        parent_filters.roles = vec![];
+        parent = ctx.build(&parent_filters);
     }
     cap(&mut parent);
     let max = all.iter().map(|p| p.edpi).fold(600.0, f64::max);
@@ -204,10 +226,18 @@ pub fn analyze(data: &Dataset, request: &AnalysisRequest) -> Analysis {
         .map(|i| i as f64 * (max + 80.0) / (GRID_SIZE - 1) as f64)
         .collect();
     let mut comp_filters = f.clone();
-    comp_filters.role = None;
+    comp_filters.roles = vec![];
     comp_filters.style = None;
-    let comp_players = players::build(data, &comp_filters);
-    let roles = ["Duelist", "Initiator", "Controller", "Sentinel", "Flex"]
+    let comp_players = ctx.build(&comp_filters);
+    let role_names = ["Duelist", "Initiator", "Controller", "Sentinel", "Flex"];
+    let role_profiles = role_names
+        .iter()
+        .map(|r| {
+            let members: Vec<&Player> = comp_players.iter().filter(|p| p.role == *r).collect();
+            profile(r, &members)
+        })
+        .collect();
+    let roles = role_names
         .iter()
         .map(|r| {
             comparison(
@@ -243,6 +273,8 @@ pub fn analyze(data: &Dataset, request: &AnalysisRequest) -> Analysis {
         )
     })
     .collect();
+    let cohort =
+        (!selected.is_empty()).then(|| profile("Cohort", &selected.iter().collect::<Vec<_>>()));
     let mut response = Analysis {
         summary: None,
         density: vec![],
@@ -250,10 +282,12 @@ pub fn analyze(data: &Dataset, request: &AnalysisRequest) -> Analysis {
         players: selected,
         roles,
         styles,
+        cohort,
+        role_profiles,
         warnings: vec![],
         dpi: request.dpi,
         total_players: all.len(),
-        model_version: "1.0.0",
+        model_version: MODEL_VERSION,
     };
     if response.players.is_empty() {
         response.warnings.push(
@@ -408,18 +442,21 @@ mod tests {
 #[cfg(test)]
 mod integration_tests {
     use super::*;
+    fn context(d: &Dataset) -> players::Context {
+        players::Context::new(std::sync::Arc::new(d.clone()))
+    }
     #[test]
     fn normalization_never_changes_model() {
         let d = crate::sources::seed().unwrap();
         let a = analyze(
-            &d,
+            &context(&d),
             &AnalysisRequest {
                 dpi: 800.0,
                 filters: Filters::default(),
             },
         );
         let b = analyze(
-            &d,
+            &context(&d),
             &AnalysisRequest {
                 dpi: 1600.0,
                 filters: Filters::default(),
@@ -451,7 +488,7 @@ mod integration_tests {
         let all = players::build(&d, &Filters::default());
         let event = d.events.first().unwrap().tournament.clone();
         let f = Filters {
-            tournament: Some(event.clone()),
+            tournaments: vec![event.clone()],
             ..Default::default()
         };
         let selected = players::build(&d, &f);
@@ -471,7 +508,7 @@ mod integration_tests {
     fn empty_and_small_cohorts_do_not_claim_certainty() {
         let d = crate::sources::seed().unwrap();
         let empty = analyze(
-            &d,
+            &context(&d),
             &AnalysisRequest {
                 dpi: 800.,
                 filters: Filters {
@@ -482,7 +519,7 @@ mod integration_tests {
         );
         assert!(empty.summary.is_none());
         let one = analyze(
-            &d,
+            &context(&d),
             &AnalysisRequest {
                 dpi: 800.,
                 filters: Filters {
@@ -499,20 +536,63 @@ mod integration_tests {
         let parent = players::build(
             &d,
             &Filters {
-                role: Some("Sentinel".into()),
+                roles: vec!["Sentinel".into()],
                 ..Default::default()
             },
         );
         let child = players::build(
             &d,
             &Filters {
-                role: Some("Sentinel".into()),
-                agent: Some("chamber".into()),
+                roles: vec!["Sentinel".into()],
+                agents: vec!["chamber".into(), "cypher".into()],
                 ..Default::default()
             },
         );
         for p in child {
             assert!(parent.iter().any(|q| q.id == p.id));
         }
+    }
+    #[test]
+    fn role_profiles_pool_cohort_rounds() {
+        let d = crate::sources::seed().unwrap();
+        let a = analyze(
+            &context(&d),
+            &AnalysisRequest {
+                dpi: 800.,
+                filters: Filters::default(),
+            },
+        );
+        assert_eq!(a.role_profiles.len(), 5);
+        let counted: usize = a.role_profiles.iter().map(|r| r.count).sum();
+        assert_eq!(counted, a.players.len());
+        let cohort = a.cohort.unwrap();
+        let pooled: f64 = a.role_profiles.iter().map(|r| r.maps).sum();
+        assert!((cohort.maps - pooled).abs() < 1e-6);
+        let duelist = &a.role_profiles[0];
+        let controller = &a.role_profiles[2];
+        assert!(duelist.stats.kpr.unwrap() > controller.stats.kpr.unwrap());
+        assert!((duelist.agents.iter().map(|x| x.share).sum::<f64>() - 1.0).abs() < 1e-9);
+    }
+    #[test]
+    fn multi_role_cohort_spans_roles() {
+        let d = crate::sources::seed().unwrap();
+        let a = analyze(
+            &context(&d),
+            &AnalysisRequest {
+                dpi: 800.,
+                filters: Filters {
+                    roles: vec!["Duelist".into(), "Initiator".into()],
+                    ..Default::default()
+                },
+            },
+        );
+        assert!(
+            a.players
+                .iter()
+                .all(|p| p.role == "Duelist" || p.role == "Initiator")
+        );
+        assert!(a.players.iter().any(|p| p.role == "Duelist"));
+        assert!(a.players.iter().any(|p| p.role == "Initiator"));
+        assert!(a.summary.is_some());
     }
 }

@@ -71,6 +71,11 @@ for (const viewport of [
 
     await page.locator(".player-name").first().click();
     await withinViewport(dialog, page, 12);
+    await dialog.getByRole("tab", { name: "Career" }).click();
+    // Wide layouts scroll the tab body; compact layouts scroll the whole dialog.
+    await dialog.locator(".player-detail").evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
     await dialog.locator('[data-slot="dialog-body"]').evaluate((element) => {
       element.scrollTop = element.scrollHeight;
     });
@@ -108,9 +113,17 @@ test("mobile filters and long dropdown options stay inside the viewport", async 
   await page.getByRole("button", { name: "More filters" }).click();
   await page.getByRole("combobox", { name: "All tournaments" }).click();
   await withinViewport(page.getByRole("listbox"), page, 12);
+  await expect(
+    page.getByRole("textbox", { name: "Search all tournaments" }),
+  ).toBeFocused();
+  await page.keyboard.press("ArrowDown");
   await page.keyboard.press("End");
-  await expect(page.getByRole("option").last()).toBeInViewport();
+  const last = page.getByRole("option").last();
+  await expect(last).toBeInViewport();
+  await expect(last).toBeFocused();
   await page.keyboard.press("Enter");
+  await expect(last).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("Escape");
   await expect(page.getByRole("listbox")).not.toBeVisible();
   expect(
     await page.evaluate(

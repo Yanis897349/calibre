@@ -13,6 +13,8 @@ import {
   ArrowDown,
   ArrowRight,
   ArrowUpRight,
+  Check,
+  Link2,
   ChevronRight,
   Focus,
   Info,
@@ -21,6 +23,7 @@ import {
   Mouse,
   Search,
   Settings2,
+  Trophy,
   SlidersHorizontal,
   Users,
   X,
@@ -52,6 +55,15 @@ import {
   TableCell,
 } from "./components/ui/table";
 import { SummaryMetrics } from "./components/summary-metrics";
+import { MultiSelect } from "./components/multi-select";
+import { Badge, RoleBadge } from "./components/badges";
+import { CohortCombat, RoleProfiles } from "./combat";
+import { PlayerDetail } from "./player-detail";
+import { readState, writeState } from "./url-state";
+import { useCopy } from "./hooks/use-copy";
+import { MapLabel, MapThumb, WeaponIcon } from "./components/game-media";
+import { StyleIcon, StyleLabel } from "./components/style-icon";
+import { type StatKey, formatStat, scatterAxes } from "./metrics";
 import { AnalysisUnavailable } from "./components/analysis-unavailable";
 import { AgentIcon, agentDisplayName } from "./components/agent-icon";
 import {
@@ -71,14 +83,16 @@ import {
   type Analysis,
   type Filters,
   type Meta,
+  type ListFilter,
   type Player,
   type Mechanical,
   roles,
   styles,
   mechanics,
+  performanceBases,
   colors,
   num,
-  date,
+  pct,
   title,
 } from "./types";
 
@@ -147,25 +161,6 @@ function Choose({
   );
 }
 
-function Badge({
-  children,
-  tone = "neutral",
-}: {
-  children: ReactNode;
-  tone?: string;
-}) {
-  return <span className={"badge " + tone}>{children}</span>;
-}
-
-function RoleBadge({ role }: { role: string }) {
-  return (
-    <span className="role-badge" style={{ color: colors.get(role) }}>
-      <RoleIcon role={role} />
-      {role}
-    </span>
-  );
-}
-
 function SectionTitle({
   title: heading,
   description,
@@ -192,10 +187,50 @@ function pageFromHash(): Page {
   return nav.find((item) => item.id === page)?.id ?? "overview";
 }
 
+/** Keeps the address bar shareable and opens a player from a shared link once loaded. */
+function useSharedLink({
+  linkedPlayer,
+  data,
+  filters,
+  dpi,
+  selected,
+  onOpen,
+}: {
+  linkedPlayer: RefObject<string | undefined>;
+  data: Analysis | null;
+  filters: Filters;
+  dpi: number;
+  selected: Player | null;
+  onOpen: (player: Player, list: Player[]) => void;
+}) {
+  useEffect(() => {
+    const id = linkedPlayer.current;
+
+    if (!data || !id) return;
+    linkedPlayer.current = undefined;
+
+    const match = data.players.find((p) => p.id === id);
+
+    if (match) onOpen(match, data.players);
+  }, [data, linkedPlayer, onOpen]);
+
+  useEffect(() => {
+    const query = writeState({ filters, dpi, player: selected?.id });
+
+    if (query !== location.search)
+      history.replaceState(
+        history.state,
+        "",
+        `${location.pathname}${query}${location.hash}`,
+      );
+  }, [filters, dpi, selected]);
+}
+
 export default function App() {
+  const [initial] = useState(() => readState(location.search));
   const [page, setPage] = useState<Page>(pageFromHash);
-  const [filters, setFilters] = useState<Filters>({});
-  const [dpi, setDpi] = useState(800);
+  const [filters, setFilters] = useState<Filters>(initial.filters);
+  const [dpi, setDpi] = useState(initial.dpi);
   const [data, setData] = useState<Analysis | null>(null);
   const [meta, setMeta] = useState<Meta | null>(null);
   const [error, setError] = useState("");
@@ -203,20 +238,23 @@ export default function App() {
   const [retry, setRetry] = useState(0);
   const [advanced, setAdvanced] = useState(false);
   const [selected, setSelected] = useState<Player | null>(null);
+  const [browse, setBrowse] = useState<Player[]>([]);
   const [mobile, setMobile] = useState(false);
   const [profile, setProfile] = useState(defaultProfile);
   const [unit, setUnit] = useState("sensitivity");
   const [raw, setRaw] = useState(false);
   const search = useRef<HTMLInputElement>(null);
   const dialogOpener = useRef<HTMLElement | SVGElement | null>(null);
+  const linkedPlayer = useRef(initial.player);
 
-  function openPlayer(player: Player) {
+  function openPlayer(player: Player, list?: Player[]) {
     const activeElement = document.activeElement;
     dialogOpener.current =
       activeElement instanceof HTMLElement ||
       activeElement instanceof SVGElement
         ? activeElement
         : null;
+    setBrowse(list ?? data?.players ?? []);
     setSelected(player);
   }
 
@@ -307,7 +345,17 @@ export default function App() {
     };
   }, [effectiveFilters, dpi, retry]);
 
-  const summary = data?.summary;
+  useSharedLink({
+    linkedPlayer,
+    data,
+    filters,
+    dpi,
+    selected,
+    onOpen: (player, list) => {
+      setBrowse(list);
+      setSelected(player);
+    },
+  });
 
   const pageHeading = {
     overview: "Sensitivity, backed by data.",
@@ -397,7 +445,6 @@ export default function App() {
             meta={meta}
             dpi={dpi}
             setDpi={setDpi}
-            update={update}
             setFilters={setFilters}
             onAdvanced={(event) => {
               dialogOpener.current = event.currentTarget;
@@ -435,104 +482,25 @@ export default function App() {
                   setProfile={setProfile}
                   filters={filters}
                   update={update}
+                  setFilters={setFilters}
                   go={go}
                   openPlayer={openPlayer}
                   search={search}
                 />
               )}
-              {["roles", "styles"].includes(page) && (
-                <section className="comparison-view">
-                  <div className="panel">
-                    <SectionTitle
-                      title={
-                        page === "roles"
-                          ? "Role distributions"
-                          : "Mechanical-style distributions"
-                      }
-                    />
-                    <CompareChart
-                      data={data}
-                      groups={page === "roles" ? data.roles : data.styles}
-                      dpi={dpi}
-                    />
-                    <div className="comparison-legend">
-                      {(page === "roles" ? data.roles : data.styles).map(
-                        (g, i) => (
-                          <span key={g.name}>
-                            {page === "roles" ? (
-                              <RoleBadge role={g.name} />
-                            ) : (
-                              <>
-                                <i
-                                  style={{
-                                    background: [
-                                      "#c6f27b",
-                                      "#a68bea",
-                                      "#71bdd8",
-                                      "#e5ab70",
-                                      "#c9a7c4",
-                                      "#ee8181",
-                                      "#9da1a8",
-                                    ][i],
-                                  }}
-                                />
-                                {g.name}
-                              </>
-                            )}
-                          </span>
-                        ),
-                      )}
-                    </div>
-                  </div>
-                  <div className="comparison-cards">
-                    {(page === "roles" ? data.roles : data.styles).map(
-                      (g, i) => (
-                        <div className="panel compare-card" key={g.name}>
-                          <SectionTitle
-                            title={
-                              page === "roles" ? (
-                                <RoleBadge role={g.name} />
-                              ) : (
-                                g.name
-                              )
-                            }
-                          >
-                            <Badge>{g.count} players</Badge>
-                          </SectionTitle>
-                          <MiniDensity group={g} index={i} />
-                          <div className="metric-number">
-                            {g.peak === null ? "—" : num(g.peak / dpi, 3)}
-                            <span>@ {dpi} DPI</span>
-                          </div>
-                          <Button
-                            variant="tertiary"
-                            onClick={() => {
-                              update(
-                                page === "roles" ? "role" : "style",
-                                g.name,
-                              );
-                              go("overview");
-                            }}
-                          >
-                            Explore cohort
-                            <ArrowUpRight size={14} />
-                          </Button>
-                        </div>
-                      ),
-                    )}
-                  </div>
-                  <div className="panel">
-                    <SectionTitle
-                      title="Sensitivity meets mechanics"
-                      description="Each point is a player. Point size reflects statistical influence."
-                    />
-                    <ScatterExplorer
-                      players={data.players}
-                      dpi={dpi}
-                      onPlayer={openPlayer}
-                    />
-                  </div>
-                </section>
+              {(page === "roles" || page === "styles") && (
+                <ComparisonView
+                  page={page}
+                  data={data}
+                  dpi={dpi}
+                  onExplore={(name) => {
+                    if (page === "roles")
+                      updateList(setFilters, "roles", [name]);
+                    else update("style", name);
+                    go("overview");
+                  }}
+                  openPlayer={openPlayer}
+                />
               )}
               {page === "players" && (
                 <>
@@ -578,27 +546,215 @@ export default function App() {
         data={data}
         restoreDialogFocus={restoreDialogFocus}
       />
-      <Dialog
-        open={!!selected}
-        onOpenChange={(open) => {
-          if (!open) setSelected(null);
-        }}
-      >
-        <DialogContent
-          size="xl"
-          className="player-dialog"
-          onCloseAutoFocus={restoreDialogFocus}
-        >
-          {selected && (
-            <PlayerDetail
-              player={selected}
-              recommendation={summary?.peak}
-              dpi={dpi}
-            />
-          )}
-        </DialogContent>
-      </Dialog>
+      <PlayerDialog
+        selected={selected}
+        browse={browse}
+        data={data}
+        dpi={dpi}
+        onSelect={setSelected}
+        onFilter={(key, value) => updateList(setFilters, key, [value])}
+        restoreDialogFocus={restoreDialogFocus}
+      />
     </div>
+  );
+}
+
+function PlayerDialog({
+  selected,
+  browse,
+  data,
+  dpi,
+  onSelect,
+  onFilter,
+  restoreDialogFocus,
+}: {
+  selected: Player | null;
+  browse: Player[];
+  data: Analysis | null;
+  dpi: number;
+  onSelect: (player: Player | null) => void;
+  onFilter: (key: "agents" | "teams", value: string) => void;
+  restoreDialogFocus: (event: Event) => void;
+}) {
+  return (
+    <Dialog
+      open={!!selected}
+      onOpenChange={(open) => {
+        if (!open) onSelect(null);
+      }}
+    >
+      <DialogContent
+        size="xl"
+        className="player-dialog max-w-[1120px]"
+        onCloseAutoFocus={restoreDialogFocus}
+      >
+        {selected && (
+          <PlayerDetail
+            player={selected}
+            players={browse}
+            cohort={data?.players ?? browse}
+            onNavigate={onSelect}
+            summary={data?.summary ?? undefined}
+            dpi={dpi}
+            baseline={data?.cohort?.stats}
+            onFilter={(key, value) => {
+              onSelect(null);
+              onFilter(key, value);
+            }}
+          />
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+const styleColors = [
+  "#c6f27b",
+  "#a68bea",
+  "#71bdd8",
+  "#e5ab70",
+  "#c9a7c4",
+  "#ee8181",
+  "#9da1a8",
+];
+
+function groupLeaders(
+  players: Player[],
+  page: "roles" | "styles",
+  name: string,
+) {
+  const members =
+    page === "roles"
+      ? players.filter((p) => p.role === name)
+      : [...players].sort(
+          (a, b) => (b.styles[name] ?? 0) - (a.styles[name] ?? 0),
+        );
+
+  return members
+    .slice(0, page === "roles" ? undefined : 40)
+    .sort((a, b) => b.contribution - a.contribution)
+    .slice(0, 5);
+}
+
+function GroupLeaders({
+  players,
+  onPlayer,
+}: {
+  players: Player[];
+  onPlayer: (player: Player, list?: Player[]) => void;
+}) {
+  if (!players.length) return null;
+
+  return (
+    <div className="group-leaders">
+      <span>Most influential</span>
+      <div>
+        {players.map((p) => (
+          <button
+            key={p.id}
+            type="button"
+            className="leader"
+            aria-label={`Open ${p.name}`}
+            title={`${p.name} · ${num(p.edpi, 0)} eDPI`}
+            onClick={() => onPlayer(p, players)}
+          >
+            <PlayerPortrait id={p.id} name={p.name} size={30} />
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ComparisonView({
+  page,
+  data,
+  dpi,
+  onExplore,
+  openPlayer,
+}: {
+  page: "roles" | "styles";
+  data: Analysis;
+  dpi: number;
+  onExplore: (name: string) => void;
+  openPlayer: (player: Player, list?: Player[]) => void;
+}) {
+  return (
+    <section className="comparison-view">
+      <div className="panel">
+        <SectionTitle
+          title={
+            page === "roles"
+              ? "Role distributions"
+              : "Mechanical-style distributions"
+          }
+        />
+        <CompareChart
+          data={data}
+          groups={page === "roles" ? data.roles : data.styles}
+          dpi={dpi}
+        />
+        <div className="comparison-legend">
+          {(page === "roles" ? data.roles : data.styles).map((g, i) => (
+            <span key={g.name}>
+              {page === "roles" ? (
+                <RoleBadge role={g.name} />
+              ) : (
+                <span
+                  className="style-legend"
+                  style={{ color: styleColors[i] }}
+                >
+                  <StyleIcon style={g.name} size={12} />
+                  <span>{g.name}</span>
+                </span>
+              )}
+            </span>
+          ))}
+        </div>
+      </div>
+      <div className="comparison-cards">
+        {(page === "roles" ? data.roles : data.styles).map((g, i) => (
+          <div className="panel compare-card" key={g.name}>
+            <SectionTitle
+              title={
+                page === "roles" ? (
+                  <RoleBadge role={g.name} />
+                ) : (
+                  <StyleLabel style={g.name} />
+                )
+              }
+            >
+              <Badge>{g.count} players</Badge>
+            </SectionTitle>
+            <MiniDensity group={g} index={i} />
+            <div className="metric-number">
+              {g.peak === null ? "—" : num(g.peak / dpi, 3)}
+              <span>@ {dpi} DPI</span>
+            </div>
+            <GroupLeaders
+              players={groupLeaders(data.players, page, g.name)}
+              onPlayer={openPlayer}
+            />
+            <Button variant="tertiary" onClick={() => onExplore(g.name)}>
+              Explore cohort
+              <ArrowUpRight size={14} />
+            </Button>
+          </div>
+        ))}
+      </div>
+      {page === "roles" && <RoleProfiles profiles={data.role_profiles} />}
+      <div className="panel">
+        <SectionTitle
+          title="Sensitivity meets mechanics"
+          description="Each point is a player. Point size reflects statistical influence."
+        />
+        <ScatterExplorer
+          players={data.players}
+          dpi={dpi}
+          onPlayer={openPlayer}
+        />
+      </div>
+    </section>
   );
 }
 
@@ -609,12 +765,155 @@ type UpdateFilter = <K extends keyof Filters>(
 
 type SetFilters = Dispatch<SetStateAction<Filters>>;
 
+const listLabels: Record<ListFilter | "years", string> = {
+  roles: "Role",
+  agents: "Agent",
+  teams: "Team",
+  regions: "Region",
+  tournaments: "Tournament",
+  years: "Season",
+  tiers: "Tier",
+  maps: "Map",
+};
+
+const listKeys = [
+  "roles",
+  "agents",
+  "teams",
+  "regions",
+  "tournaments",
+  "years",
+  "tiers",
+  "maps",
+] as const;
+
+const scalarLabels: Partial<Record<keyof Filters, string>> = {
+  search: "Search",
+  style: "Style",
+  performance_basis: "Performance",
+  performance_min: "Min performance",
+  maps_min: "Min maps",
+  agent_share_min: "Min agent share",
+  active_days: "Active within",
+  op_share_min: "Min Operator kills",
+  op_share_max: "Max Operator kills",
+};
+
+const fractionFilters = new Set<keyof Filters>([
+  "performance_min",
+  "agent_share_min",
+  "op_share_min",
+  "op_share_max",
+]);
+
+function updateList(setFilters: SetFilters, key: ListFilter, values: string[]) {
+  setFilters((f) => ({ ...f, [key]: values.length ? values : undefined }));
+}
+
+function scalarText(key: keyof Filters, value: Filters[keyof Filters]) {
+  const stat = statRanges.find(
+    (r) => key === `${r.key}_min` || key === `${r.key}_max`,
+  );
+
+  if (stat) {
+    const bound = key.endsWith("_min") ? "Min" : "Max";
+
+    return `${bound} ${stat.label}: ${stat.format(Number(value))}`;
+  }
+
+  const label =
+    scalarLabels[key] ??
+    key.charAt(0).toUpperCase() + key.slice(1).replaceAll("_", " ");
+
+  const shown =
+    key === "performance_basis"
+      ? performanceBases.find(([k]) => k === value)?.[1]
+      : key === "active_days"
+        ? `${num(Number(value))} days`
+        : fractionFilters.has(key)
+          ? pct(Number(value))
+          : String(value);
+
+  return `${label}: ${shown}`;
+}
+
+type FilterChip = {
+  id: string;
+  text: string;
+  icon?: ReactNode;
+  remove: () => void;
+};
+
+function listChipIcon(key: (typeof listKeys)[number], value: string) {
+  if (key === "agents") return <AgentIcon name={value} size={18} />;
+
+  if (key === "roles") return <RoleIcon role={value} />;
+
+  if (key === "teams") return <TeamIcon team={value} size={18} />;
+
+  if (key === "maps") return <MapThumb name={value} className="chip-map" />;
+
+  return undefined;
+}
+
+function scalarChipIcon(key: keyof Filters, value: Filters[keyof Filters]) {
+  if (key === "style") return <StyleIcon style={String(value)} size={12} />;
+
+  if (key === "op_share_min" || key === "op_share_max")
+    return <WeaponIcon name="Operator" height={9} className="chip-weapon" />;
+
+  return undefined;
+}
+
+function filterChips(filters: Filters, setFilters: SetFilters): FilterChip[] {
+  const chips: FilterChip[] = [];
+
+  for (const key of listKeys) {
+    for (const value of filters[key] ?? []) {
+      const text = String(value);
+
+      chips.push({
+        id: `${key}:${text}`,
+        text: `${listLabels[key]}: ${key === "agents" ? agentDisplayName(text) : text}`,
+        icon: listChipIcon(key, text),
+        remove: () =>
+          setFilters((f) => {
+            const rest =
+              key === "years"
+                ? f.years?.filter((y) => y !== value)
+                : f[key]?.filter((v) => v !== value);
+
+            return { ...f, [key]: rest?.length ? rest : undefined };
+          }),
+      });
+    }
+  }
+
+  for (const [k, v] of Object.entries(filters)) {
+    // SAFETY: entries come from the typed Filters state.
+    const key = k as keyof Filters;
+
+    if (v === undefined || v === "" || listKeys.some((l) => l === key))
+      continue;
+
+    chips.push({
+      id: key,
+      text: scalarText(key, v),
+      icon: scalarChipIcon(key, v),
+      remove: () => setFilters((f) => ({ ...f, [key]: undefined })),
+    });
+  }
+
+  return chips;
+}
+
+const presetDpis = [400, 800, 1600];
+
 function CohortControls({
   filters,
   meta,
   dpi,
   setDpi,
-  update,
   setFilters,
   onAdvanced,
 }: {
@@ -622,16 +921,14 @@ function CohortControls({
   meta: Meta | null;
   dpi: number;
   setDpi: (dpi: number) => void;
-  update: UpdateFilter;
   setFilters: SetFilters;
   onAdvanced: (event: React.MouseEvent<HTMLButtonElement>) => void;
 }) {
-  const [customDpi, setCustomDpi] = useState("800");
-  const [custom, setCustom] = useState(false);
+  const [customDpi, setCustomDpi] = useState(String(dpi));
+  const [custom, setCustom] = useState(() => !presetDpis.includes(dpi));
+  const { copied, copy } = useCopy();
 
-  const active = Object.entries(filters).filter(
-    ([, v]) => v !== undefined && v !== "",
-  );
+  const active = filterChips(filters, setFilters);
 
   return (
     <>
@@ -641,24 +938,29 @@ function CohortControls({
             <SlidersHorizontal size={14} />
             Cohort
           </span>
-          <Choose
+          <MultiSelect
             label="All roles"
-            value={filters.role}
+            values={filters.roles ?? []}
             options={roles}
             renderOption={(role) => <RoleBadge role={role} />}
-            onChange={(v) => update("role", v)}
+            onChange={(v) => updateList(setFilters, "roles", v)}
           />
-          <Choose
+          <MultiSelect
             label="All regions"
-            value={filters.region}
+            values={filters.regions ?? []}
             options={meta?.regions || []}
-            onChange={(v) => update("region", v)}
+            onChange={(v) => updateList(setFilters, "regions", v)}
           />
-          <Choose
+          <MultiSelect
             label="All seasons"
-            value={filters.year?.toString()}
+            values={(filters.years ?? []).map(String)}
             options={meta?.years || []}
-            onChange={(v) => update("year", v ? Number(v) : undefined)}
+            onChange={(v) =>
+              setFilters((f) => ({
+                ...f,
+                years: v.length ? v.map(Number) : undefined,
+              }))
+            }
           />
           <Button variant="ghost" className="more-filters" onClick={onAdvanced}>
             <Settings2 size={14} />
@@ -672,7 +974,7 @@ function CohortControls({
           <Mouse size={14} />
           <span>Display DPI</span>
           <div className="segmented">
-            {[400, 800, 1600].map((d) => (
+            {presetDpis.map((d) => (
               <button
                 key={d}
                 className={!custom && dpi === d ? "selected" : ""}
@@ -715,29 +1017,634 @@ function CohortControls({
       )}
       {active.length > 0 && (
         <div className="active-filters">
-          {active.map(([k, v]) => (
+          {active.map((chip) => (
             <button
-              key={k}
-              onClick={() => {
-                // SAFETY: active contains only own entries from the typed Filters state.
-                update(k as keyof Filters, undefined);
-              }}
+              key={chip.id}
+              aria-label={`Remove ${chip.text}`}
+              onClick={chip.remove}
             >
-              {k === "agent" && <AgentIcon name={String(v)} size={18} />}
-              {k === "role" && <RoleIcon role={String(v)} />}
-              {k === "team" && <TeamIcon team={String(v)} size={18} />}
-              {k.charAt(0).toUpperCase() +
-                k.slice(1).replaceAll("_", " ")}:{" "}
-              {k === "agent" ? agentDisplayName(String(v)) : String(v)}
+              {chip.icon}
+              {chip.text}
               <X size={11} />
             </button>
           ))}
           <button className="clear-filters" onClick={() => setFilters({})}>
             Clear all
           </button>
+          <button
+            className={"share-filters" + (copied ? " copied" : "")}
+            onClick={() => copy("cohort", location.href)}
+          >
+            {copied ? <Check size={11} /> : <Link2 size={11} />}
+            {copied ? "Link copied" : "Copy link"}
+          </button>
         </div>
       )}
     </>
+  );
+}
+
+const activityWindows = [
+  ["90", "Last 90 days"],
+  ["180", "Last 6 months"],
+  ["365", "Last year"],
+  ["730", "Last 2 years"],
+] as const;
+
+const basisHint: Record<NonNullable<Filters["performance_basis"]>, string> = {
+  composite:
+    "Blends rating, ADR, headshot %, K/D, KDA, and KAST percentiles. Small samples are pulled toward the league average.",
+  rating: "VLR rating percentile among all professionals.",
+  kd: "Kills per death percentile among all professionals.",
+  kda: "Kills plus assists per death percentile.",
+  adr: "Average damage per round percentile.",
+  kast: "Percentile of rounds with a kill, assist, survival, or trade.",
+  hs: "Headshot percentage percentile, the closest aim-precision signal.",
+  acs: "Average combat score percentile.",
+};
+
+type StatRangeConfig = {
+  key: "kd" | "kda" | "adr" | "kast" | "hs" | "rating" | "op_share";
+  label: string;
+  low: number;
+  high: number;
+  step: number;
+  format: (v: number) => string;
+};
+
+const statRanges: StatRangeConfig[] = [
+  {
+    key: "rating",
+    label: "Rating",
+    low: 0.5,
+    high: 1.5,
+    step: 0.01,
+    format: (v) => num(v, 2),
+  },
+  {
+    key: "kd",
+    label: "K/D",
+    low: 0.5,
+    high: 1.6,
+    step: 0.01,
+    format: (v) => num(v, 2),
+  },
+  {
+    key: "kda",
+    label: "KDA",
+    low: 0.8,
+    high: 2.2,
+    step: 0.01,
+    format: (v) => num(v, 2),
+  },
+  {
+    key: "adr",
+    label: "ADR",
+    low: 80,
+    high: 180,
+    step: 1,
+    format: (v) => num(v),
+  },
+  {
+    key: "kast",
+    label: "KAST",
+    low: 0.6,
+    high: 0.82,
+    step: 0.005,
+    format: (v) => pct(v, 1),
+  },
+  {
+    key: "hs",
+    label: "Headshot %",
+    low: 0.15,
+    high: 0.4,
+    step: 0.005,
+    format: (v) => pct(v, 1),
+  },
+];
+
+const operatorRange: StatRangeConfig = {
+  key: "op_share",
+  label: "Operator kills",
+  low: 0,
+  high: 0.5,
+  step: 0.01,
+  format: (v) => pct(v),
+};
+
+function StatRange({
+  range,
+  filters,
+  setFilters,
+}: {
+  range: StatRangeConfig;
+  filters: Filters;
+  setFilters: SetFilters;
+}) {
+  const minimum = `${range.key}_min` as const;
+  const maximum = `${range.key}_max` as const;
+
+  return (
+    <div className="slider-field">
+      <div>
+        <label>{range.label}</label>
+      </div>
+      <RatioSlider
+        label={range.label + " range"}
+        value={[
+          Math.max(range.low, filters[minimum] ?? range.low),
+          Math.min(range.high, filters[maximum] ?? range.high),
+        ]}
+        min={range.low}
+        max={range.high}
+        step={range.step}
+        formatValue={range.format}
+        onChange={(v) => {
+          if (Array.isArray(v))
+            setFilters((f) => ({
+              ...f,
+              [minimum]: v[0] <= range.low ? undefined : v[0],
+              [maximum]: v[1] >= range.high ? undefined : v[1],
+            }));
+        }}
+      />
+    </div>
+  );
+}
+
+function Threshold({
+  label,
+  value,
+  max,
+  step,
+  format,
+  onChange,
+}: {
+  label: string;
+  value?: number;
+  max: number;
+  step: number;
+  format: (v: number) => string;
+  onChange: (v: number | undefined) => void;
+}) {
+  return (
+    <div className="slider-field">
+      <div>
+        <label>{label}</label>
+      </div>
+      <RatioSlider
+        label={label}
+        value={value ?? 0}
+        min={0}
+        max={max}
+        step={step}
+        formatValue={format}
+        onChange={(v) => onChange(Number(v) || undefined)}
+      />
+    </div>
+  );
+}
+
+type FilterSectionId =
+  | "competition"
+  | "equipment"
+  | "playstyle"
+  | "performance"
+  | "weapons"
+  | "sample";
+
+type FilterKey = keyof Filters;
+
+const boundKeys = <K extends string>(keys: readonly K[]) =>
+  keys.flatMap((k) => [`${k}_min` as const, `${k}_max` as const]);
+
+const mechanicKeys = boundKeys(mechanics.map(([k]) => k));
+
+const statKeys = boundKeys(statRanges.map((r) => r.key));
+
+const filterSections: {
+  id: FilterSectionId;
+  label: string;
+  icon: ReactNode;
+  keys: FilterKey[];
+}[] = [
+  {
+    id: "competition",
+    label: "Competition",
+    icon: <Trophy size={14} />,
+    keys: [
+      "agents",
+      "agent_share_min",
+      "teams",
+      "tournaments",
+      "tiers",
+      "maps",
+      "active_days",
+    ],
+  },
+  {
+    id: "equipment",
+    label: "Equipment",
+    icon: <Mouse size={14} />,
+    keys: boundKeys(["edpi", "sensitivity", "dpi"] as const),
+  },
+  {
+    id: "playstyle",
+    label: "Playstyle",
+    icon: <Focus size={14} />,
+    keys: ["style", ...mechanicKeys],
+  },
+  {
+    id: "performance",
+    label: "Performance",
+    icon: <Activity size={14} />,
+    keys: ["performance_basis", "performance_min", ...statKeys],
+  },
+  {
+    id: "weapons",
+    label: "Weapons",
+    icon: <WeaponIcon name="Operator" height={10} />,
+    keys: ["op_share_min", "op_share_max"],
+  },
+  {
+    id: "sample",
+    label: "Sample quality",
+    icon: <Layers3 size={14} />,
+    keys: ["maps_min"],
+  },
+];
+
+function activeCount(filters: Filters, keys: FilterKey[]) {
+  return keys.reduce((count, k) => {
+    const value = filters[k];
+
+    return (
+      count + (Array.isArray(value) ? value.length : value == null ? 0 : 1)
+    );
+  }, 0);
+}
+
+function clearKeys(setFilters: SetFilters, keys: FilterKey[]) {
+  setFilters((current) => {
+    const next = { ...current };
+
+    for (const key of keys) delete next[key];
+
+    return next;
+  });
+}
+
+function FilterSection({
+  id,
+  filters,
+  setFilters,
+  description,
+  children,
+}: {
+  id: FilterSectionId;
+  filters: Filters;
+  setFilters: SetFilters;
+  description?: string;
+  children: ReactNode;
+}) {
+  const section = filterSections.find((s) => s.id === id)!;
+  const count = activeCount(filters, section.keys);
+
+  return (
+    <section
+      className="filter-section"
+      id={`filter-section-${id}`}
+      data-section={id}
+      aria-labelledby={`filter-heading-${id}`}
+    >
+      <header>
+        <h3 id={`filter-heading-${id}`}>
+          <span className="filter-section-icon">{section.icon}</span>
+          {section.label}
+        </h3>
+        {count > 0 && (
+          <button
+            type="button"
+            className="text-link"
+            onClick={() => clearKeys(setFilters, section.keys)}
+          >
+            Clear {count}
+          </button>
+        )}
+      </header>
+      {description && <p className="field-hint">{description}</p>}
+      <div className="filter-fields">{children}</div>
+    </section>
+  );
+}
+
+type SectionProps = {
+  filters: Filters;
+  meta: Meta | null;
+  update: UpdateFilter;
+  setFilters: SetFilters;
+};
+
+function CompetitionSection({
+  filters,
+  meta,
+  update,
+  setFilters,
+}: SectionProps) {
+  return (
+    <FilterSection id="competition" filters={filters} setFilters={setFilters}>
+      <label className="wide">
+        Agents
+        <MultiSelect
+          label="All agents"
+          values={filters.agents ?? []}
+          options={meta?.agents || []}
+          format={agentDisplayName}
+          renderOption={(agent) => (
+            <span className="agent-label">
+              <AgentIcon name={agent} />
+              <span>{agentDisplayName(agent)}</span>
+            </span>
+          )}
+          onChange={(v) => updateList(setFilters, "agents", v)}
+        />
+      </label>
+      {(filters.agents?.length ?? 0) > 0 && (
+        <div className="wide">
+          <Threshold
+            label="Minimum share of maps on these agents"
+            value={filters.agent_share_min}
+            max={1}
+            step={0.05}
+            format={(v) => pct(v)}
+            onChange={(v) => update("agent_share_min", v)}
+          />
+        </div>
+      )}
+      <label>
+        Teams
+        <MultiSelect
+          label="All teams"
+          values={filters.teams ?? []}
+          options={meta?.teams || []}
+          renderOption={(team) => <TeamLabel team={team} size={20} />}
+          onChange={(v) => updateList(setFilters, "teams", v)}
+        />
+      </label>
+      <label>
+        Tournaments
+        <MultiSelect
+          label="All tournaments"
+          values={filters.tournaments ?? []}
+          options={meta?.tournaments || []}
+          onChange={(v) => updateList(setFilters, "tournaments", v)}
+        />
+      </label>
+      <label>
+        Event tier
+        <MultiSelect
+          label="All tiers"
+          values={filters.tiers ?? []}
+          options={meta?.tiers || []}
+          onChange={(v) => updateList(setFilters, "tiers", v)}
+        />
+      </label>
+      <label>
+        Maps
+        <MultiSelect
+          label="All maps"
+          values={filters.maps ?? []}
+          options={meta?.maps || []}
+          renderOption={(map) => <MapLabel name={map} />}
+          onChange={(v) => updateList(setFilters, "maps", v)}
+        />
+      </label>
+      <label>
+        Last competitive match
+        <Choose
+          label="Any time"
+          value={filters.active_days?.toString()}
+          options={activityWindows.map(([days]) => days)}
+          renderOption={(days) =>
+            activityWindows.find(([d]) => d === days)?.[1]
+          }
+          onChange={(v) => update("active_days", v ? Number(v) : undefined)}
+        />
+      </label>
+    </FilterSection>
+  );
+}
+
+function EquipmentSection({ filters, meta, setFilters }: SectionProps) {
+  return (
+    <FilterSection id="equipment" filters={filters} setFilters={setFilters}>
+      {equipmentRanges(meta).map(({ label, key, max, step, precision }) => {
+        const minimum = `${key}_min` as const;
+        const maximum = `${key}_max` as const;
+
+        return (
+          <div className="slider-field setting-range-field" key={key}>
+            <div>
+              <label>{label}</label>
+            </div>
+            <RatioSlider
+              label={label}
+              value={[
+                Number(filters[minimum] ?? 0),
+                Number(filters[maximum] ?? max),
+              ]}
+              min={0}
+              max={max}
+              step={step}
+              formatValue={(v) => num(v, Number.isInteger(v) ? 0 : precision)}
+              onChange={(values) => {
+                if (Array.isArray(values))
+                  setFilters((current) => ({
+                    ...current,
+                    [minimum]: values[0] === 0 ? undefined : values[0],
+                    [maximum]: values[1] === max ? undefined : values[1],
+                  }));
+              }}
+            />
+          </div>
+        );
+      })}
+    </FilterSection>
+  );
+}
+
+function PlaystyleSection({ filters, update, setFilters }: SectionProps) {
+  return (
+    <FilterSection id="playstyle" filters={filters} setFilters={setFilters}>
+      <label className="wide">
+        Mechanical style
+        <Choose
+          label="All styles"
+          value={filters.style}
+          options={styles}
+          renderOption={(style) => <StyleLabel style={style} />}
+          onChange={(v) => update("style", v)}
+        />
+      </label>
+      {mechanics.map(([k, label]) => (
+        <div className="slider-field" key={k}>
+          <div>
+            <label>{label}</label>
+          </div>
+          <RatioSlider
+            label={label + " range"}
+            value={[
+              Number(filters[`${k}_min`] ?? 0),
+              Number(filters[`${k}_max`] ?? 1),
+            ]}
+            min={0}
+            max={1}
+            step={0.01}
+            onChange={(v) => {
+              if (Array.isArray(v))
+                setFilters((f) => ({
+                  ...f,
+                  [k + "_min"]: v[0] || undefined,
+                  [k + "_max"]: v[1] === 1 ? undefined : v[1],
+                }));
+            }}
+          />
+        </div>
+      ))}
+    </FilterSection>
+  );
+}
+
+function PerformanceSection({ filters, update, setFilters }: SectionProps) {
+  return (
+    <FilterSection id="performance" filters={filters} setFilters={setFilters}>
+      <label>
+        Score performance by
+        <Choose
+          label="Score performance by"
+          all={false}
+          value={filters.performance_basis ?? "composite"}
+          options={performanceBases.map(([k]) => k)}
+          renderOption={(k) => performanceBases.find(([b]) => b === k)?.[1]}
+          onChange={(v) =>
+            update(
+              "performance_basis",
+              performanceBases.find(([b]) => b === v && b !== "composite")?.[0],
+            )
+          }
+        />
+        <span className="field-note">
+          {basisHint[filters.performance_basis ?? "composite"]}
+        </span>
+      </label>
+      <div className="slider-field">
+        <div>
+          <label>Minimum performance percentile</label>
+        </div>
+        <RatioSlider
+          label="Minimum performance score"
+          value={filters.performance_min || 0}
+          min={0}
+          max={1}
+          step={0.01}
+          onChange={(v) => update("performance_min", Number(v) || undefined)}
+        />
+      </div>
+      <h4 className="wide">Combat statistics</h4>
+      {statRanges.map((range) => (
+        <StatRange
+          key={range.key}
+          range={range}
+          filters={filters}
+          setFilters={setFilters}
+        />
+      ))}
+    </FilterSection>
+  );
+}
+
+function WeaponsSection({ filters, setFilters }: SectionProps) {
+  return (
+    <FilterSection
+      id="weapons"
+      filters={filters}
+      setFilters={setFilters}
+      description="Share of kills with the Operator. Use it to separate dedicated Operator players from rifle players in the same role. Other weapons are not tracked individually."
+    >
+      <div className="weapon-filter wide">
+        <span className="weapon-filter-icons" aria-hidden="true">
+          <WeaponIcon name="Operator" height={18} className="operator" />
+        </span>
+        <StatRange
+          range={operatorRange}
+          filters={filters}
+          setFilters={setFilters}
+        />
+      </div>
+    </FilterSection>
+  );
+}
+
+function SampleSection({ filters, update, setFilters }: SectionProps) {
+  return (
+    <FilterSection id="sample" filters={filters} setFilters={setFilters}>
+      <label>
+        Minimum maps
+        <input
+          type="number"
+          min={0}
+          max={100000}
+          value={filters.maps_min ?? ""}
+          placeholder="No minimum"
+          onChange={(e) =>
+            update(
+              "maps_min",
+              e.target.value ? Number(e.target.value) : undefined,
+            )
+          }
+        />
+      </label>
+    </FilterSection>
+  );
+}
+
+function FilterNav({
+  filters,
+  active,
+  onSelect,
+}: {
+  filters: Filters;
+  active: FilterSectionId;
+  onSelect: (id: FilterSectionId) => void;
+}) {
+  const nav = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    nav.current
+      ?.querySelector(".active")
+      ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [active]);
+
+  return (
+    <nav className="filter-nav" aria-label="Filter sections" ref={nav}>
+      {filterSections.map((s) => {
+        const count = activeCount(filters, s.keys);
+
+        return (
+          <button
+            key={s.id}
+            type="button"
+            className={active === s.id ? "active" : undefined}
+            aria-current={active === s.id ? "true" : undefined}
+            onClick={() => onSelect(s.id)}
+          >
+            <span className="filter-section-icon">{s.icon}</span>
+            {s.label}
+            {count > 0 && <span className="count-chip">{count}</span>}
+          </button>
+        );
+      })}
+    </nav>
   );
 }
 
@@ -762,11 +1669,51 @@ function AdvancedFilters({
   data: Analysis | null;
   restoreDialogFocus: (event: Event) => void;
 }) {
+  const [active, setActive] = useState<FilterSectionId>("competition");
+  const body = useRef<HTMLDivElement>(null);
+  const lockedUntil = useRef(0);
+  const props = { filters, meta, update, setFilters };
+
+  function select(id: FilterSectionId) {
+    setActive(id);
+    // Keep the chosen section highlighted while smooth scrolling passes other sections.
+    lockedUntil.current = Date.now() + 700;
+    body.current
+      ?.querySelector(`#filter-section-${id}`)
+      ?.scrollIntoView({ block: "start", behavior: "smooth" });
+  }
+
+  function onScroll(element: HTMLDivElement) {
+    if (Date.now() < lockedUntil.current) return;
+
+    const top = element.getBoundingClientRect().top + 48;
+
+    const sections = [
+      ...element.querySelectorAll<HTMLElement>("[data-section]"),
+    ];
+
+    const current = sections.filter(
+      (s) => s.getBoundingClientRect().top <= top,
+    );
+
+    const last =
+      element.scrollTop + element.clientHeight >= element.scrollHeight - 4;
+
+    const match = filterSections.find(
+      (s) =>
+        s.id ===
+        (last ? sections.at(-1) : (current.at(-1) ?? sections[0]))?.dataset
+          .section,
+    );
+
+    if (match) setActive(match.id);
+  }
+
   return (
     <Dialog open={advanced} onOpenChange={setAdvanced}>
       <DialogContent
         size="xl"
-        className="filters-dialog"
+        className="filters-dialog max-w-[1040px]"
         onCloseAutoFocus={restoreDialogFocus}
       >
         <DialogHeader className="dialog-header">
@@ -775,168 +1722,27 @@ function AdvancedFilters({
             Filter players by competitive history, settings, and playstyle.
           </DialogDescription>
         </DialogHeader>
-        <DialogBody className="dialog-body">
-          <div className="advanced-grid">
-            <div>
-              <h3>Competition & equipment</h3>
-              <label>
-                Agent
-                <Choose
-                  label="All agents"
-                  value={filters.agent}
-                  options={meta?.agents || []}
-                  renderOption={(agent) => (
-                    <span className="agent-label">
-                      <AgentIcon name={agent} />
-                      <span>{agentDisplayName(agent)}</span>
-                    </span>
-                  )}
-                  onChange={(v) => update("agent", v)}
-                />
-              </label>
-              <label>
-                Team
-                <Choose
-                  label="All teams"
-                  value={filters.team}
-                  options={meta?.teams || []}
-                  renderOption={(team) => <TeamLabel team={team} size={20} />}
-                  onChange={(v) => update("team", v)}
-                />
-              </label>
-              <label>
-                Tournament
-                <Choose
-                  label="All tournaments"
-                  value={filters.tournament}
-                  options={meta?.tournaments || []}
-                  onChange={(v) => update("tournament", v)}
-                />
-              </label>
-              <label>
-                Event tier
-                <Choose
-                  label="All tiers"
-                  value={filters.tier}
-                  options={meta?.tiers || []}
-                  onChange={(v) => update("tier", v)}
-                />
-              </label>
-              <label>
-                Mechanical style
-                <Choose
-                  label="All styles"
-                  value={filters.style}
-                  options={styles}
-                  onChange={(v) => update("style", v)}
-                />
-              </label>
-              {equipmentRanges(meta).map(
-                ({ label, key, max, step, precision }) => {
-                  const minimum = `${key}_min` as const;
-                  const maximum = `${key}_max` as const;
-
-                  return (
-                    <div className="slider-field setting-range-field" key={key}>
-                      <div>
-                        <label>{label}</label>
-                      </div>
-                      <RatioSlider
-                        label={label}
-                        value={[
-                          Number(filters[minimum] ?? 0),
-                          Number(filters[maximum] ?? max),
-                        ]}
-                        min={0}
-                        max={max}
-                        step={step}
-                        formatValue={(v) =>
-                          num(v, Number.isInteger(v) ? 0 : precision)
-                        }
-                        onChange={(values) => {
-                          if (Array.isArray(values))
-                            setFilters((current) => ({
-                              ...current,
-                              [minimum]:
-                                values[0] === 0 ? undefined : values[0],
-                              [maximum]:
-                                values[1] === max ? undefined : values[1],
-                            }));
-                        }}
-                      />
-                    </div>
-                  );
-                },
-              )}
-            </div>
-            <div>
-              <h3>Mechanical profile</h3>
-              {mechanics.map(([k, label]) => (
-                <div className="slider-field" key={k}>
-                  <div>
-                    <label>{label}</label>
-                  </div>
-                  <RatioSlider
-                    label={label + " range"}
-                    value={[
-                      Number(filters[`${k}_min`] ?? 0),
-                      Number(filters[`${k}_max`] ?? 1),
-                    ]}
-                    min={0}
-                    max={1}
-                    step={0.01}
-                    onChange={(v) => {
-                      if (Array.isArray(v))
-                        setFilters((f) => ({
-                          ...f,
-                          [k + "_min"]: v[0] || undefined,
-                          [k + "_max"]: v[1] === 1 ? undefined : v[1],
-                        }));
-                    }}
-                  />
-                </div>
-              ))}
-              <h3>Sample quality</h3>
-              <label>
-                Minimum maps
-                <input
-                  type="number"
-                  min={0}
-                  max={100000}
-                  value={filters.maps_min ?? ""}
-                  placeholder="No minimum"
-                  onChange={(e) =>
-                    update(
-                      "maps_min",
-                      e.target.value ? Number(e.target.value) : undefined,
-                    )
-                  }
-                />
-              </label>
-              <div className="slider-field">
-                <div>
-                  <label>Minimum performance score</label>
-                </div>
-                <RatioSlider
-                  label="Minimum performance score"
-                  value={filters.performance_min || 0}
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  onChange={(v) =>
-                    update("performance_min", Number(v) || undefined)
-                  }
-                />
-              </div>
-            </div>
-          </div>
-        </DialogBody>
+        <div className="filters-layout">
+          <FilterNav filters={filters} active={active} onSelect={select} />
+          <DialogBody
+            ref={body}
+            className="dialog-body filter-sections"
+            onScroll={(event) => onScroll(event.currentTarget)}
+          >
+            <CompetitionSection {...props} />
+            <EquipmentSection {...props} />
+            <PlaystyleSection {...props} />
+            <PerformanceSection {...props} />
+            <WeaponsSection {...props} />
+            <SampleSection {...props} />
+          </DialogBody>
+        </div>
         <div className="dialog-footer">
           <Button variant="ghost" onClick={() => setFilters({})}>
             <RotateCcw size={14} />
             Reset filters
           </Button>
-          <span>
+          <span role="status" aria-live="polite">
             {pending
               ? "Calculating…"
               : `${data?.players.length || 0} matching players`}
@@ -963,6 +1769,7 @@ function Overview({
   setProfile,
   filters,
   update,
+  setFilters,
   go,
   openPlayer,
   search,
@@ -978,8 +1785,9 @@ function Overview({
   setProfile: (profile: Mechanical) => void;
   filters: Filters;
   update: UpdateFilter;
+  setFilters: SetFilters;
   go: (page: Page) => void;
-  openPlayer: (player: Player) => void;
+  openPlayer: (player: Player, list?: Player[]) => void;
   search: RefObject<HTMLInputElement | null>;
 }) {
   const summary = data.summary;
@@ -990,8 +1798,8 @@ function Overview({
         <ProfileEditor
           profile={profile}
           onChange={setProfile}
-          role={filters.role}
-          onRole={(r) => update("role", r)}
+          roles={filters.roles ?? []}
+          onRoles={(r) => updateList(setFilters, "roles", r)}
         />
       )}
       <SummaryMetrics data={data} dpi={dpi} />
@@ -1069,6 +1877,7 @@ function Overview({
           </div>
         </section>
       </div>
+      {data.cohort && <CohortCombat profile={data.cohort} />}
       {page === "overview" && (
         <>
           <SectionTitle
@@ -1086,11 +1895,20 @@ function Overview({
                 <button
                   className={
                     "role-card " +
-                    (filters.role === r.name ? "role-selected" : "")
+                    (filters.roles?.includes(r.name) ? "role-selected" : "")
                   }
                   key={r.name}
+                  aria-pressed={filters.roles?.includes(r.name) ?? false}
                   onClick={() =>
-                    update("role", filters.role === r.name ? undefined : r.name)
+                    updateList(
+                      setFilters,
+                      "roles",
+                      filters.roles?.includes(r.name)
+                        ? filters.roles.filter((x) => x !== r.name)
+                        : roles.filter(
+                            (x) => x === r.name || filters.roles?.includes(x),
+                          ),
+                    )
                   }
                 >
                   <div className="role-card-top">
@@ -1126,15 +1944,6 @@ function Overview({
   );
 }
 
-const scatterAxes = [
-  "performance",
-  "operator",
-  "movement",
-  "entry",
-  "anchor",
-  "utility",
-] as const;
-
 function ScatterExplorer({
   players,
   dpi,
@@ -1144,22 +1953,18 @@ function ScatterExplorer({
   dpi: number;
   onPlayer: (p: Player) => void;
 }) {
-  const [axis, setAxis] = useState<"performance" | keyof Mechanical>(
-    "performance",
-  );
+  const [axisKey, setAxisKey] = useState("performance");
+  const axis = scatterAxes.find((a) => a.key === axisKey) ?? scatterAxes[0];
 
   return (
     <>
       <div className="scatter-control">
         <Choose
           label="Y axis"
-          value={axis}
-          options={[...scatterAxes]}
-          onChange={(value) => {
-            const selectedAxis = scatterAxes.find((option) => option === value);
-
-            if (selectedAxis) setAxis(selectedAxis);
-          }}
+          value={axis.key}
+          options={scatterAxes.map((a) => a.key)}
+          renderOption={(key) => scatterAxes.find((a) => a.key === key)?.label}
+          onChange={setAxisKey}
           all={false}
         />
         <span>× sensitivity at {dpi} DPI</span>
@@ -1179,7 +1984,7 @@ function PlayerTable({
   onExpand,
 }: {
   players: Player[];
-  onPlayer: (p: Player) => void;
+  onPlayer: (p: Player, list?: Player[]) => void;
   compact?: boolean;
   searchRef: React.RefObject<HTMLInputElement | null>;
   searchValue: string;
@@ -1188,6 +1993,7 @@ function PlayerTable({
 }) {
   const [sort, setSort] = useState<PlayerSortKey>("contribution");
   const [direction, setDirection] = useState(-1);
+  const [view, setView] = useState<TableView>("settings");
   const batchSize = 30;
   const [visibleCount, setVisibleCount] = useState(batchSize);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -1231,26 +2037,7 @@ function PlayerTable({
     };
   }, [sorted, hasMore, visibleCount]);
 
-  const cols: [PlayerSortKey, string][] = [
-    ["name", "Player"],
-    ["team", "Team"],
-    ["role", "Role"],
-    ["dpi", "DPI"],
-    ["sensitivity", "Native sens"],
-    ["edpi", "eDPI"],
-    ["normalized_800", "@ 800 DPI"],
-    ["performance", "Performance"],
-    ["maps", "Maps"],
-    ["contribution", "Weight"],
-  ];
-
-  if (!compact)
-    cols.splice(
-      8,
-      0,
-      ["achievement", "Achievement"],
-      ...mechanics.map(([k, l]): [PlayerSortKey, string] => [k, l]),
-    );
+  const columns = tableColumns(compact ? "compact" : view);
 
   return (
     <section className="panel player-table-panel">
@@ -1274,11 +2061,28 @@ function PlayerTable({
             />
             <kbd>⌘ K</kbd>
           </div>
-          {compact && (
+          {compact ? (
             <button className="text-link" onClick={onExpand}>
               All columns
               <ArrowUpRight size={14} />
             </button>
+          ) : (
+            <div
+              className="segmented small"
+              role="group"
+              aria-label="Table columns"
+            >
+              {tableViews.map(([id, label]) => (
+                <button
+                  key={id}
+                  className={view === id ? "selected" : ""}
+                  aria-pressed={view === id}
+                  onClick={() => setView(id)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           )}
         </div>
       </SectionTitle>
@@ -1303,7 +2107,7 @@ function PlayerTable({
         <Table>
           <TableHeader>
             <TableRow>
-              {cols.map(([k, label]) => (
+              {columns.map(({ key: k, label, icon }) => (
                 <TableHead
                   key={k}
                   aria-sort={
@@ -1320,6 +2124,7 @@ function PlayerTable({
                       setDirection(sort === k ? -direction : -1);
                     }}
                   >
+                    {icon}
                     {label}
                     {sort === k && (
                       <ArrowDown
@@ -1337,9 +2142,26 @@ function PlayerTable({
           </TableHeader>
           <TableBody>
             {shown.map((p, i) => (
-              <TableRow key={p.id} index={i}>
+              <TableRow
+                key={p.id}
+                index={i}
+                className="clickable-row"
+                onClick={(event) => {
+                  // The name button stays the keyboard entry point; the row adds a larger pointer target.
+                  if (!(event.target instanceof Element)) return;
+
+                  if (event.target.closest("button")) return;
+                  event.currentTarget
+                    .querySelector<HTMLElement>(".player-name")
+                    ?.focus();
+                  onPlayer(p, sorted);
+                }}
+              >
                 <TableCell>
-                  <button className="player-name" onClick={() => onPlayer(p)}>
+                  <button
+                    className="player-name"
+                    onClick={() => onPlayer(p, sorted)}
+                  >
                     <PlayerPortrait id={p.id} name={p.name} />
                     <span>
                       {p.name}
@@ -1367,40 +2189,11 @@ function PlayerTable({
                 <TableCell>
                   <RoleBadge role={p.role} />
                 </TableCell>
-                <TableCell className="mono muted">
-                  {num(p.setting.dpi)}
-                </TableCell>
-                <TableCell className="mono">
-                  {num(p.setting.sensitivity, 3)}
-                </TableCell>
-                <TableCell className="mono">{num(p.edpi, 1)}</TableCell>
-                <TableCell className="mono accent">
-                  {num(p.normalized_800, 3)}
-                </TableCell>
-                <TableCell>
-                  <span className="performance-cell">
-                    <i style={{ width: p.performance * 36 }} />
-                    {num(p.performance * 100, 1)}
-                  </span>
-                </TableCell>
-                {!compact && (
-                  <>
-                    <TableCell className="mono">
-                      {p.achievement === null
-                        ? "—"
-                        : num(p.achievement * 100, 1)}
-                    </TableCell>
-                    {mechanics.map(([k]) => (
-                      <TableCell key={k} className="mono muted">
-                        {num(p.mechanical[k] * 100)}%
-                      </TableCell>
-                    ))}
-                  </>
-                )}
-                <TableCell className="mono muted">{num(p.maps)}</TableCell>
-                <TableCell className="mono">
-                  {num(p.contribution * 100, 2)}%
-                </TableCell>
+                {columns.slice(3).map((c) => (
+                  <TableCell key={c.key} className={c.className ?? "mono"}>
+                    {c.render(p)}
+                  </TableCell>
+                ))}
               </TableRow>
             ))}
           </TableBody>
@@ -1438,13 +2231,13 @@ function PlayerTable({
 function ProfileEditor({
   profile,
   onChange,
-  role,
-  onRole,
+  roles: selectedRoles,
+  onRoles,
 }: {
   profile: Mechanical;
   onChange: (m: Mechanical) => void;
-  role?: string;
-  onRole: (r: string) => void;
+  roles: string[];
+  onRoles: (r: string[]) => void;
 }) {
   const presets = [
     {
@@ -1509,7 +2302,7 @@ function ProfileEditor({
             key={p.name}
             variant="tertiary"
             onClick={() => {
-              onRole(p.role);
+              onRoles([p.role]);
               onChange(p.v);
             }}
           >
@@ -1528,12 +2321,12 @@ function ProfileEditor({
       </div>
       <div className="profile-layout">
         <div className="profile-sliders">
-          <Choose
+          <MultiSelect
             label="All roles"
-            value={role}
+            values={selectedRoles}
             options={roles}
             renderOption={(role) => <RoleBadge role={role} />}
-            onChange={onRole}
+            onChange={onRoles}
           />
           {mechanics.map(([k, l]) => (
             <div className="slider-field" key={k}>
@@ -1563,198 +2356,6 @@ function ProfileEditor({
   );
 }
 
-function PlayerDetail({
-  player: p,
-  recommendation,
-  dpi,
-}: {
-  player: Player;
-  recommendation?: number;
-  dpi: number;
-}) {
-  const roleHistory = useMemo(() => {
-    const groups: { role: string; years: number[] }[] = [];
-
-    const entries = Object.entries(p.role_history).sort(
-      ([a], [b]) => Number(b) - Number(a),
-    );
-
-    for (const [year, role] of entries) {
-      const previous = groups.at(-1);
-      const numericYear = Number(year);
-
-      if (
-        previous?.role === role &&
-        previous.years.at(-1)! - numericYear === 1
-      ) {
-        previous.years.push(numericYear);
-      } else {
-        groups.push({ role, years: [numericYear] });
-      }
-    }
-
-    return groups;
-  }, [p.role_history]);
-
-  const observations = useMemo(() => {
-    const history = [...p.history].sort(
-      (a, b) => Date.parse(a.observed_at) - Date.parse(b.observed_at),
-    );
-
-    // Keep same-day setting changes and reversions when collapsing duplicate readings.
-    return history.filter((setting, index) => {
-      const previous = history[index - 1];
-
-      return (
-        !previous ||
-        date(setting.observed_at) !== date(previous.observed_at) ||
-        setting.dpi !== previous.dpi ||
-        setting.sensitivity !== previous.sensitivity
-      );
-    });
-  }, [p.history]);
-
-  return (
-    <>
-      <div className="dialog-header player-detail-heading">
-        <PlayerPortrait id={p.id} name={p.name} size={56} />
-        <div>
-          <DialogTitle>{p.name}</DialogTitle>
-          <DialogDescription className="player-detail-meta">
-            <TeamLabel team={p.team} size={20} />
-            <span>
-              {p.region} · {num(p.maps)} maps
-            </span>
-          </DialogDescription>
-        </div>
-        <RoleBadge role={p.role} />
-      </div>
-      <DialogBody className="dialog-body">
-        <div className="detail-metrics">
-          <div>
-            <span>eDPI</span>
-            <strong>{num(p.edpi, 1)}</strong>
-          </div>
-          <div>
-            <span>Sensitivity @ {dpi} DPI</span>
-            <strong className="accent">{num(p.edpi / dpi, 3)}</strong>
-          </div>
-          <div>
-            <span>Current cohort influence</span>
-            <strong>{num(p.contribution * 100, 2)}%</strong>
-          </div>
-          <div>
-            <span>Distance from peak</span>
-            <strong>
-              {recommendation
-                ? `${p.edpi >= recommendation ? "+" : ""}${num((p.edpi / recommendation - 1) * 100, 1)}%`
-                : "—"}
-            </strong>
-          </div>
-        </div>
-        <div className="detail-grid">
-          <section>
-            <h3>Mechanical fingerprint</h3>
-            <MechanicalRadar profile={p.mechanical} />
-            {mechanics.map(([k, l]) => (
-              <div className="detail-bar" key={k}>
-                <span>{l}</span>
-                <div>
-                  <i style={{ width: `${p.mechanical[k] * 100}%` }} />
-                </div>
-                <strong>{num(p.mechanical[k] * 100)}%</strong>
-              </div>
-            ))}
-          </section>
-          <section>
-            <h3>Agent usage</h3>
-            {p.agents.slice(0, 6).map((a) => (
-              <div className="agent-row" key={a.name}>
-                <AgentIcon name={a.name} size={32} />
-                <span>{agentDisplayName(a.name)}</span>
-                <span>{num(a.share * 100)}%</span>
-                <small>{a.maps} maps</small>
-              </div>
-            ))}
-            <h3>Performance & contribution</h3>
-            <div className="insight-detail">
-              <span>Rating / ACS</span>
-              <strong>
-                {num(p.rating, 2)} / {num(p.acs, 1)}
-              </strong>
-            </div>
-            <div className="insight-detail">
-              <span>Individual performance</span>
-              <strong>{num(p.performance * 100, 1)} / 100</strong>
-            </div>
-            <div className="insight-detail">
-              <span>Achievement score</span>
-              <strong>
-                {p.achievement == null ? "—" : num(p.achievement * 100, 1)}
-              </strong>
-            </div>
-            <div className="insight-detail">
-              <span>Reliability / raw weight</span>
-              <strong>
-                {num(p.reliability * 100)}% / {num(p.weight, 3)}
-              </strong>
-            </div>
-            <div className="insight-detail">
-              <span>Last competitive activity</span>
-              <strong>{date(p.last_played)}</strong>
-            </div>
-          </section>
-        </div>
-        <h3>Role history</h3>
-        <div
-          className="role-history"
-          role="list"
-          aria-label="Roles, newest first"
-        >
-          {roleHistory.map(({ years, role }) => (
-            <div className="role-history-period" key={years[0]} role="listitem">
-              <div className="role-history-years">
-                {years.map((year) => (
-                  <span key={year}>{year}</span>
-                ))}
-              </div>
-              <div className="role-history-detail">
-                <RoleBadge role={role} />
-                {years.length > 1 && <small>{years.length} seasons</small>}
-              </div>
-            </div>
-          ))}
-        </div>
-        <h3>Sensitivity observations</h3>
-        <div className="observations">
-          {observations.map((s, i) => (
-            <div key={i}>
-              <span className="status-dot" />
-              <span>{date(s.observed_at)}</span>
-              <strong>
-                {num(s.dpi)} DPI × {num(s.sensitivity, 3)}
-              </strong>
-              <span>{num(s.dpi * s.sensitivity, 1)} eDPI</span>
-            </div>
-          ))}
-        </div>
-        <h3>Tournament history</h3>
-        {p.events.length ? (
-          p.events.map((e, i) => (
-            <div className="event-row" key={i}>
-              <span>{e.tournament}</span>
-              <Badge>#{e.placement}</Badge>
-              <span>{e.year}</span>
-            </div>
-          ))
-        ) : (
-          <p className="muted">No tournament results available.</p>
-        )}
-      </DialogBody>
-    </>
-  );
-}
-
 function equipmentRanges(meta: Meta | null) {
   return [
     {
@@ -1781,6 +2382,33 @@ function equipmentRanges(meta: Meta | null) {
   ];
 }
 
+const tableStats = [
+  "rating",
+  "kd",
+  "kda",
+  "adr",
+  "kast",
+  "hs",
+  "fk_per_round",
+  "op_kill_share",
+] as const satisfies readonly StatKey[];
+
+const tableStatLabels: Record<(typeof tableStats)[number], string> = {
+  rating: "Rating",
+  kd: "K/D",
+  kda: "KDA",
+  adr: "ADR",
+  kast: "KAST",
+  hs: "HS%",
+  fk_per_round: "FK / rd",
+  op_kill_share: "Op kills",
+};
+
+function compareStat(key: StatKey) {
+  return (a: Player, b: Player) =>
+    (a.stats[key] ?? -Infinity) - (b.stats[key] ?? -Infinity);
+}
+
 const playerComparators = {
   name: (a: Player, b: Player) => a.name.localeCompare(b.name),
   team: (a: Player, b: Player) => a.team.localeCompare(b.team),
@@ -1803,6 +2431,125 @@ const playerComparators = {
   anchor: (a: Player, b: Player) => a.mechanical.anchor - b.mechanical.anchor,
   utility: (a: Player, b: Player) =>
     a.mechanical.utility - b.mechanical.utility,
+  rating: compareStat("rating"),
+  kd: compareStat("kd"),
+  kda: compareStat("kda"),
+  adr: compareStat("adr"),
+  kast: compareStat("kast"),
+  hs: compareStat("hs"),
+  fk_per_round: compareStat("fk_per_round"),
+  op_kill_share: compareStat("op_kill_share"),
 };
 
 type PlayerSortKey = keyof typeof playerComparators;
+
+type TableView = "settings" | "combat" | "mechanics";
+
+const tableViews: [TableView, string][] = [
+  ["settings", "Settings"],
+  ["combat", "Combat"],
+  ["mechanics", "Mechanics"],
+];
+
+type Column = {
+  key: PlayerSortKey;
+  label: string;
+  icon?: ReactNode;
+  className?: string;
+  render: (p: Player) => ReactNode;
+};
+
+const performanceColumn: Column = {
+  key: "performance",
+  label: "Performance",
+  className: "",
+  render: (p) => (
+    <span className="performance-cell">
+      <i style={{ width: p.performance * 36 }} />
+      {num(p.performance * 100, 1)}
+    </span>
+  ),
+};
+
+const settingColumns: Column[] = [
+  {
+    key: "dpi",
+    label: "DPI",
+    className: "mono muted",
+    render: (p) => num(p.setting.dpi),
+  },
+  {
+    key: "sensitivity",
+    label: "Native sens",
+    render: (p) => num(p.setting.sensitivity, 3),
+  },
+  { key: "edpi", label: "eDPI", render: (p) => num(p.edpi, 1) },
+  {
+    key: "normalized_800",
+    label: "@ 800 DPI",
+    className: "mono accent",
+    render: (p) => num(p.normalized_800, 3),
+  },
+];
+
+const trailingColumns: Column[] = [
+  {
+    key: "maps",
+    label: "Maps",
+    className: "mono muted",
+    render: (p) => num(p.maps),
+  },
+  {
+    key: "contribution",
+    label: "Weight",
+    render: (p) => `${num(p.contribution * 100, 2)}%`,
+  },
+];
+
+const statColumns: Column[] = tableStats.map((key) => ({
+  key,
+  label: tableStatLabels[key],
+  icon:
+    key === "op_kill_share" ? (
+      <WeaponIcon name="Operator" height={8} className="column-weapon" />
+    ) : undefined,
+  render: (p: Player) => formatStat(key, p.stats[key]),
+}));
+
+function tableColumns(view: TableView | "compact"): Column[] {
+  const identity: Column[] = [
+    { key: "name", label: "Player", render: () => null },
+    { key: "team", label: "Team", render: () => null },
+    { key: "role", label: "Role", render: () => null },
+  ];
+
+  const middle: Record<TableView | "compact", Column[]> = {
+    compact: [...settingColumns, performanceColumn],
+    settings: [
+      ...settingColumns,
+      performanceColumn,
+      {
+        key: "achievement",
+        label: "Achievement",
+        render: (p) =>
+          p.achievement === null ? "—" : num(p.achievement * 100, 1),
+      },
+    ],
+    combat: [
+      { key: "edpi", label: "eDPI", render: (p) => num(p.edpi, 1) },
+      performanceColumn,
+      ...statColumns,
+    ],
+    mechanics: [
+      { key: "edpi", label: "eDPI", render: (p) => num(p.edpi, 1) },
+      ...mechanics.map(([k, l]): Column => ({
+        key: k,
+        label: l,
+        className: "mono muted",
+        render: (p) => `${num(p.mechanical[k] * 100)}%`,
+      })),
+    ],
+  };
+
+  return [...identity, ...middle[view], ...trailingColumns];
+}

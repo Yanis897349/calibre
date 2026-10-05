@@ -1,0 +1,122 @@
+{
+  "ares": {
+    "name": "Ares",
+    "category": "Machine guns",
+    "cost": 1600,
+    "icon": "/weapons/ares.png"
+  },
+  "bandit": {
+    "name": "Bandit",
+    "category": "Sidearms",
+    "cost": 600,
+    "icon": "/weapons/bandit.png"
+  },
+  "bucky": {
+    "name": "Bucky",
+    "category": "Shotguns",
+    "cost": 850,
+    "icon": "/weapons/bucky.png"
+  },
+  "bulldog": {
+    "name": "Bulldog",
+    "category": "Rifles",
+    "cost": 2050,
+    "icon": "/weapons/bulldog.png"
+  },
+  "classic": {
+    "name": "Classic",
+    "category": "Sidearms",
+    "cost": 0,
+    "icon": "/weapons/classic.png"
+  },
+  "frenzy": {
+    "name": "Frenzy",
+    "category": "Sidearms",
+    "cost": 450,
+    "icon": "/weapons/frenzy.png"
+  },
+  "ghost": {
+    "name": "Ghost",
+    "category": "Sidearms",
+    "cost": 500,
+    "icon": "/weapons/ghost.png"
+  },
+  "guardian": {
+    "name": "Guardian",
+    "category": "Rifles",
+    "cost": 2250,
+    "icon": "/weapons/guardian.png"
+  },
+  "judge": {
+    "name": "Judge",
+    "category": "Shotguns",
+    "cost": 1850,
+    "icon": "/weapons/judge.png"
+  },
+  "marshal": {
+    "name": "Marshal",
+    "category": "Snipers",
+    "cost": 950,
+    "icon": "/weapons/marshal.png"
+  },
+  "odin": {
+    "name": "Odin",
+    "category": "Machine guns",
+    "cost": 3200,
+    "icon": "/weapons/odin.png"
+  },
+  "operator": {
+    "name": "Operator",
+    "category": "Snipers",
+    "cost": 4700,
+    "icon": "/weapons/operator.png"
+  },
+  "outlaw": {
+    "name": "Outlaw",
+    "category": "Snipers",
+    "cost": 2400,
+    "icon": "/weapons/outlaw.png"
+  },
+  "phantom": {
+    "name": "Phantom",
+    "category": "Rifles",
+    "cost": 2900,
+    "icon": "/weapons/phantom.png"
+  },
+  "sheriff": {
+    "name": "Sheriff",
+    "category": "Sidearms",
+    "cost": 800,
+    "icon": "/weapons/sheriff.png"
+  },
+  "shorty": {
+    "name": "Shorty",
+    "category": "Sidearms",
+    "cost": 300,
+    "icon": "/weapons/shorty.png"
+  },
+  "spectre": {
+    "name": "Spectre",
+    "category": "SMGs",
+    "cost": 1600,
+    "icon": "/weapons/spectre.png"
+  },
+  "stinger": {
+    "name": "Stinger",
+    "category": "SMGs",
+    "cost": 1100,
+    "icon": "/weapons/stinger.png"
+  },
+  "vandal": {
+    "name": "Vandal",
+    "category": "Rifles",
+    "cost": 2900,
+    "icon": "/weapons/vandal.png"
+  },
+  "warden": {
+    "name": "Warden",
+    "category": "Rifles",
+    "cost": 2900,
+    "icon": "/weapons/warden.png"
+  }
+}

@@ -1,4 +1,5 @@
 mod db;
+mod metrics;
 mod model;
 mod players;
 mod sources;
@@ -24,7 +25,8 @@ use tokio::sync::{Mutex, RwLock, Semaphore};
 #[derive(Clone)]
 struct App {
     generation: Arc<AtomicU64>,
-    data: Arc<RwLock<Dataset>>,
+    /// Rebuilt only on import; requests share the indexed dataset and population reference.
+    data: Arc<RwLock<Arc<players::Context>>>,
     pool: Option<PgPool>,
     cache: Arc<RwLock<HashMap<String, serde_json::Value>>>,
     import: Arc<Mutex<()>>,
@@ -39,7 +41,7 @@ impl IntoResponse for ApiError {
 }
 async fn health(State(app): State<App>) -> Json<serde_json::Value> {
     Json(
-        json!({"status":"ok","storage":if app.pool.is_some(){"postgresql"}else{"memory"},"model":"1.0.0"}),
+        json!({"status":"ok","storage":if app.pool.is_some(){"postgresql"}else{"memory"},"model":stats::MODEL_VERSION}),
     )
 }
 async fn analyze(
@@ -65,10 +67,10 @@ async fn analyze(
         .acquire_owned()
         .await
         .map_err(|e| ApiError(StatusCode::SERVICE_UNAVAILABLE, e.to_string()))?;
-    let data = app.data.read().await.clone();
+    let ctx = app.data.read().await.clone();
     let value = tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        serde_json::to_value(stats::analyze(&data, &req))
+        serde_json::to_value(stats::analyze(&ctx, &req))
     })
     .await
     .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
@@ -81,7 +83,8 @@ async fn analyze(
     Ok(Json(value))
 }
 async fn metadata(State(app): State<App>) -> Json<serde_json::Value> {
-    let d = app.data.read().await;
+    let ctx = app.data.read().await.clone();
+    let d = ctx.data();
     // Stable slider bounds come from all observations, never the filtered cohort.
     let mut setting_maxima = [100.0_f64, 0.25_f64, 400.0_f64];
     for setting in d.settings.iter().filter(|setting| setting.valid()) {
@@ -101,12 +104,13 @@ async fn metadata(State(app): State<App>) -> Json<serde_json::Value> {
         v
     };
     Json(
-        json!({"setting_ranges":setting_ranges,"teams":unique(d.settings.iter().map(|s|s.team.clone()).collect()),"agents":unique(d.splits.iter().map(|s|s.agent.clone()).collect()),"regions":unique(d.splits.iter().map(|s|s.region.clone()).collect()),"years":unique(d.splits.iter().map(|s|s.season.to_string()).collect()),"tournaments":unique(d.splits.iter().map(|s|s.tournament.clone()).collect()),"tiers":unique(d.splits.iter().map(|s|s.tier.clone()).collect()),"storage":if app.pool.is_some(){"PostgreSQL"}else{"Memory · changes lost on restart"}}),
+        json!({"setting_ranges":setting_ranges,"teams":unique(d.settings.iter().map(|s|s.team.clone()).collect()),"agents":unique(d.splits.iter().map(|s|s.agent.clone()).collect()),"regions":unique(d.splits.iter().map(|s|s.region.clone()).collect()),"years":unique(d.splits.iter().map(|s|s.season.to_string()).collect()),"tournaments":unique(d.splits.iter().map(|s|s.tournament.clone()).collect()),"tiers":unique(d.splits.iter().map(|s|s.tier.clone()).collect()),"maps":unique(d.splits.iter().map(|s|s.map.clone()).filter(|m|!m.is_empty()).collect()),"storage":if app.pool.is_some(){"PostgreSQL"}else{"Memory · changes lost on restart"}}),
     )
 }
 async fn player(State(app): State<App>, Path(id): Path<String>) -> Result<Json<Player>, ApiError> {
-    let d = app.data.read().await;
-    let mut p = players::build(&d, &Filters::default());
+    let ctx = app.data.read().await.clone();
+    // Influence caps depend on the whole population, so every player is still built.
+    let mut p = ctx.build(&Filters::default());
     stats::cap(&mut p);
     p.into_iter()
         .find(|p| p.id == id)
@@ -135,7 +139,7 @@ async fn refresh(
         .import
         .try_lock()
         .map_err(|_| ApiError(StatusCode::CONFLICT, "An import is already running".into()))?;
-    let mut d = app.data.read().await.clone();
+    let mut d = app.data.read().await.data().clone();
     let imports = refresh_data(&mut d, app.pool.as_ref())
         .await
         .map_err(|e| ApiError(StatusCode::BAD_GATEWAY, e.to_string()))?;
@@ -144,7 +148,7 @@ async fn refresh(
             .await
             .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
     }
-    *app.data.write().await = d;
+    *app.data.write().await = Arc::new(players::Context::new(Arc::new(d)));
     app.generation.fetch_add(1, Ordering::SeqCst);
     app.cache.write().await.clear();
     Ok(Json(json!({"imports": imports})))
@@ -229,7 +233,38 @@ async fn main() -> anyhow::Result<()> {
         Some(p) => db::load(p).await?.unwrap_or(sources::seed()?),
         None => sources::seed()?,
     };
+    if !data.splits.is_empty() && data.splits.iter().all(|s| s.stat_rounds == 0.0) {
+        tracing::warn!(
+            "Stored competitive data predates combat statistics; run `import` to enable K/D, weapon, and map filters"
+        );
+    } else if data.splits.iter().any(|s| s.op_rounds > 0.0)
+        && data.splits.iter().all(|s| s.km_kills == 0.0)
+    {
+        tracing::warn!(
+            "Stored competitive data lacks kill-matrix totals; Operator shares are unavailable until `import` runs"
+        );
+    }
     let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("export-bundle") {
+        let path = args
+            .get(2)
+            .ok_or_else(|| anyhow::anyhow!("Provide the downloaded VCT DuckDB path"))?;
+        let out = std::path::Path::new(args.get(3).map_or("data", String::as_str));
+        let (splits, events) = sources::read_vct_database(std::path::Path::new(path))?;
+        let (competitive, events) = sources::bundle(&data.settings, splits, events)?;
+        std::fs::write(
+            out.join("competitive.json"),
+            serde_json::to_string(&competitive)?,
+        )?;
+        std::fs::write(out.join("events.json"), serde_json::to_string(&events)?)?;
+        println!(
+            "Bundled {} competitive rows and {} events into {}",
+            competitive["rows"].as_array().map_or(0, Vec::len),
+            events.len(),
+            out.display()
+        );
+        return Ok(());
+    }
     if let Some(command) = args.get(1) {
         let p = pool
             .as_ref()
@@ -298,7 +333,7 @@ async fn main() -> anyhow::Result<()> {
     }
     let app = App {
         generation: Arc::new(AtomicU64::new(0)),
-        data: Arc::new(RwLock::new(data)),
+        data: Arc::new(RwLock::new(Arc::new(players::Context::new(Arc::new(data))))),
         pool,
         cache: Arc::new(RwLock::new(HashMap::new())),
         import: Arc::new(Mutex::new(())),
